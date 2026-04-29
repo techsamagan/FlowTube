@@ -7,10 +7,18 @@ import ChannelDetail from './pages/ChannelDetail'
 import Login from './pages/Login'
 import Register from './pages/Register'
 import VerifyEmail from './pages/VerifyEmail'
+import Landing from './pages/Landing'
 
 function ProtectedRoute({ children }: { children: JSX.Element }) {
   const { isAuthenticated } = useAuth()
   return isAuthenticated ? children : <Navigate to="/login" replace />
+}
+
+function HomeRoute() {
+  const { isAuthenticated } = useAuth()
+  return isAuthenticated
+    ? <Layout><Dashboard /></Layout>
+    : <Landing />
 }
 
 function AppRoutes() {
@@ -19,11 +27,7 @@ function AppRoutes() {
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
       <Route path="/verify-email" element={<VerifyEmail />} />
-      <Route path="/" element={
-        <ProtectedRoute>
-          <Layout><Dashboard /></Layout>
-        </ProtectedRoute>
-      } />
+      <Route path="/" element={<HomeRoute />} />
       <Route path="/channels" element={
         <ProtectedRoute>
           <Layout><Channels /></Layout>

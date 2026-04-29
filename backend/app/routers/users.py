@@ -84,7 +84,7 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
     user = existing.scalar_one_or_none()
 
     code = generate_code()
-    expires = datetime.now(timezone.utc) + timedelta(minutes=15)
+    expires = datetime.utcnow() + timedelta(minutes=15)  # naive UTC — SQLite-safe
 
     if user and user.is_verified:
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -119,7 +119,12 @@ async def verify_email(body: VerifyRequest, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Already verified")
     if user.verification_code != body.code:
         raise HTTPException(status_code=400, detail="Invalid code")
-    if not user.code_expires_at or datetime.now(timezone.utc) > user.code_expires_at:
+    # SQLite returns naive datetimes; normalise both sides to UTC naive for comparison
+    expiry = user.code_expires_at
+    if expiry is not None and expiry.tzinfo is not None:
+        expiry = expiry.replace(tzinfo=None)
+    now_utc = datetime.utcnow()
+    if not expiry or now_utc > expiry:
         raise HTTPException(status_code=400, detail="Code expired")
 
     user.is_verified = True
@@ -140,7 +145,7 @@ async def resend_code(body: RegisterRequest, db: AsyncSession = Depends(get_db))
 
     code = generate_code()
     user.verification_code = code
-    user.code_expires_at = datetime.now(timezone.utc) + timedelta(minutes=15)
+    user.code_expires_at = datetime.utcnow() + timedelta(minutes=15)
     await db.commit()
     await send_verification_email(body.email, code)
     return {"message": "New code sent"}

@@ -14,6 +14,7 @@ export default function Channels() {
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ name: '', genre: GENRES[0], style_notes: '' })
   const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
 
   const load = () => getChannels().then(setChannels).catch(() => {})
 
@@ -21,12 +22,15 @@ export default function Channels() {
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault()
+    setError('')
     setSaving(true)
     try {
       await createChannel(form)
       setShowForm(false)
       setForm({ name: '', genre: GENRES[0], style_notes: '' })
       load()
+    } catch (err: any) {
+      setError(err.response?.data?.detail || err.message || 'Failed to create channel')
     } finally {
       setSaving(false)
     }
@@ -89,6 +93,9 @@ export default function Channels() {
               className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-red-500 resize-none"
             />
           </div>
+          {error && (
+            <p className="text-red-400 text-sm bg-red-900/20 rounded-lg px-3 py-2">{error}</p>
+          )}
           <button
             type="submit"
             disabled={saving}

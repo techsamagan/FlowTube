@@ -16,11 +16,18 @@ interface AuthContextType extends AuthState {
 const AuthContext = createContext<AuthContextType | null>(null)
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [auth, setAuth] = useState<AuthState>(() => ({
-    token: localStorage.getItem('token'),
-    userId: localStorage.getItem('userId'),
-    email: localStorage.getItem('email'),
-  }))
+  const [auth, setAuth] = useState<AuthState>(() => {
+    const token = localStorage.getItem('token')
+    // Set header synchronously so the very first API call is authenticated
+    if (token) {
+      api.defaults.headers.common['Authorization'] = `Bearer ${token}`
+    }
+    return {
+      token,
+      userId: localStorage.getItem('userId'),
+      email: localStorage.getItem('email'),
+    }
+  })
 
   useEffect(() => {
     if (auth.token) {

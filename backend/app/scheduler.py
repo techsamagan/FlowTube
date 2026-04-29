@@ -19,12 +19,14 @@ def _cron_parts(expr: str):
 
 def add_channel_schedule(schedule_id: str, channel_id: str, cron_expression: str):
     """Add or replace a cron job that triggers video generation for a channel."""
-    from app.database import async_session
-    from app.models import Job, Schedule
-    from app.agent.agent import run_agent
-    from app.models import Channel
 
     async def _fire():
+        from app.database import async_session
+        from app.models import Job, Schedule, Channel
+        from app.routers.jobs import _run_generation, _run_upload
+        from datetime import datetime, timezone
+
+        # Create a job record
         async with async_session() as db:
             channel = await db.get(Channel, channel_id)
             if not channel:
@@ -39,52 +41,24 @@ def add_channel_schedule(schedule_id: str, channel_id: str, cron_expression: str
             await db.commit()
             await db.refresh(job)
             job_id = job.id
-            creds = channel.credentials_json or ""
+            has_creds = bool(channel.connected and channel.credentials_json)
 
-        async def on_progress(step, pct):
-            async with async_session() as s:
-                j = await s.get(Job, job_id)
-                if j:
-                    j.current_step = step
-                    j.progress = pct
-                    await s.commit()
+        # Generate (parks at 'preview' on success)
+        await _run_generation(job_id, channel_id, "anthropic")
 
-        async with async_session() as s:
-            j = await s.get(Job, job_id)
-            if j:
-                j.status = "running"
-                await s.commit()
+        # Auto-upload if the channel is connected
+        if has_creds:
+            async with async_session() as db:
+                j = await db.get(Job, job_id)
+                if j and j.status == "preview":
+                    await _run_upload(job_id, channel_id)
 
-        try:
-            await run_agent(
-                job_id=job_id,
-                channel_name=channel.name,
-                genre=channel.genre,
-                style_notes=channel.style_notes or "",
-                credentials_json_encrypted=creds,
-                on_progress=on_progress,
-            )
-            async with async_session() as s:
-                j = await s.get(Job, job_id)
-                if j:
-                    j.status = "done"
-                    j.progress = 100
-                    await s.commit()
-
-            # Update last_run
-            async with async_session() as s:
-                from datetime import datetime, timezone
-                sched = await s.get(Schedule, schedule_id)
-                if sched:
-                    sched.last_run = datetime.now(timezone.utc)
-                    await s.commit()
-        except Exception as e:
-            async with async_session() as s:
-                j = await s.get(Job, job_id)
-                if j:
-                    j.status = "failed"
-                    j.error_message = str(e)[:2000]
-                    await s.commit()
+        # Update last_run regardless of outcome
+        async with async_session() as db:
+            sched = await db.get(Schedule, schedule_id)
+            if sched:
+                sched.last_run = datetime.now(timezone.utc)
+                await db.commit()
 
     try:
         parts = _cron_parts(cron_expression)

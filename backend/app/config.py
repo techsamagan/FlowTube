@@ -2,7 +2,7 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/ytmanager"
+    database_url: str = "sqlite+aiosqlite:///./ytmanager.db"
 
     # AI — core
     anthropic_api_key: str = ""
@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     storage_dir: str = "./storage"
 
     # Frontend URL (used for OAuth redirect after connect)
-    frontend_url: str = "http://localhost:5174"
+    frontend_url: str = "http://localhost:5173"
 
     # SMTP — for email verification
     email_host: str = "smtp.gmail.com"
