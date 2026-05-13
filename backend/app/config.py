@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     # YouTube OAuth (Google Cloud Console credentials)
     google_client_id: str = ""
     google_client_secret: str = ""
-    google_redirect_uri: str = "http://localhost:8000/api/auth/youtube/callback"
+    google_redirect_uri: str = "http://localhost:8001/api/auth/youtube/callback"
 
     # Encryption key for OAuth tokens (generate with: Fernet.generate_key())
     encryption_key: str = ""
@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     storage_dir: str = "./storage"
 
     # Frontend URL (used for OAuth redirect after connect)
-    frontend_url: str = "http://localhost:5173"
+    frontend_url: str = "http://localhost:3001"
 
     # SMTP — for email verification
     email_host: str = "smtp.gmail.com"
