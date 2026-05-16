@@ -1,0 +1,61 @@
+@import url('https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: dark; }
+
+* { -webkit-font-smoothing: antialiased; }
+
+body {
+  @apply bg-bg text-ink font-sans;
+  min-height: 100vh;
+}
+
+::selection { background: rgba(79, 142, 247, 0.3); }
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.12); border-radius: 8px; }
+
+@layer base {
+  /* No separate display face — one clean sans throughout. */
+  .font-display { font-family: inherit; }
+  .nums { font-variant-numeric: tabular-nums; }
+}
+
+@layer components {
+  /* Flat card: solid surface, hairline border, no blur/shadow/gradient. */
+  .glass {
+    @apply rounded-lg border border-border bg-surface;
+  }
+  .glass-hover {
+    @apply transition-colors;
+  }
+  .glass-hover:hover {
+    border-color: rgba(255, 255, 255, 0.18);
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-md px-4 py-2
+      text-sm font-medium transition-colors disabled:cursor-not-allowed
+      disabled:opacity-40;
+  }
+  .btn-primary {
+    @apply btn bg-accent text-white hover:brightness-110;
+  }
+  .btn-ghost {
+    @apply btn border border-border text-ink hover:bg-surface-2;
+  }
+
+  .field {
+    @apply rounded-md border border-border bg-surface-2 px-3 py-2 text-sm
+      text-ink outline-none transition-colors focus:border-accent;
+  }
+
+  .hairline { @apply h-px w-full bg-border; }
+  /* Plain small label — no uppercase, no wide tracking. */
+  .eyebrow { @apply text-xs text-muted; }
+  .tag {
+    @apply rounded border border-border px-2 py-0.5 text-xs text-muted;
+  }
+}

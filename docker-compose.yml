@@ -1,0 +1,35 @@
+services:
+  # OPTIONAL — only for local-DB mode. With Supabase, skip this service
+  # (`docker compose up -d redis`) and point DATABASE_URL/DIRECT_URL at Supabase.
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: flowtube
+      POSTGRES_PASSWORD: flowtube
+      POSTGRES_DB: flowtube
+    ports:
+      # Host 5444 → container 5432 (5432/5433 taken by local PG installs).
+      - '5444:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U flowtube']
+      interval: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - '6379:6379'
+
+  backend:
+    build: ./backend
+    env_file: ./backend/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - '4000:4000'
+
+volumes:
+  pgdata:

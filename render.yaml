@@ -1,0 +1,49 @@
+# Render Blueprint — backend only. Frontend deploys separately on Vercel.
+#
+# IMPORTANT: video rendering runs FFmpeg + edge-tts and is CPU/RAM heavy.
+# Render's FREE plan (512 MB RAM, 0.1 CPU, spins down when idle) will be very
+# slow and may OOM on long-form renders. `starter` is the realistic minimum.
+# Change `plan:` below if you accept the free-tier limitations for testing.
+services:
+  - type: web
+    name: flowtube-backend
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: starter
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: MOCK_MODE
+        value: "false"
+      - key: NODE_ENV
+        value: production
+      - key: CLAUDE_MODEL
+        value: claude-sonnet-4-20250514
+      # Secrets — set these in the Render dashboard (sync:false = not in git).
+      - key: DATABASE_URL          # Supabase pooled URI (port 6543)
+        sync: false
+      - key: DIRECT_URL            # Supabase direct URI (port 5432)
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_REDIRECT_URI   # https://<this-service>.onrender.com/api/auth/google/callback
+        sync: false
+      - key: TOKEN_ENC_KEY         # any long random string
+        sync: false
+      - key: NEXTAUTH_URL          # the Vercel frontend URL (drives CORS)
+        sync: false
+      - key: NEXTAUTH_SECRET
+        sync: false
+      - key: ELEVENLABS_API_KEY    # optional; falls back to free edge-tts
+        sync: false
+      - key: PEXELS_API_KEY
+        sync: false
+      - key: PIXABAY_API_KEY
+        sync: false
+      - key: YOUTUBE_API_KEY       # optional; trend search
+        sync: false
