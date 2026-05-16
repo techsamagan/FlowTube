@@ -18,8 +18,8 @@ The Dockerfile installs both. Plan accordingly (see Caveats).
 
    | Var | Value |
    |---|---|
-   | `DATABASE_URL` | Supabase **pooled** URI (port 6543, `?pgbouncer=true&connection_limit=1`) |
-   | `DIRECT_URL` | Supabase **direct** URI (port 5432) |
+   | `DATABASE_URL` | Supabase **pooled** URI — host `aws-0-<region>.pooler.supabase.com`, **port 6543**, `?pgbouncer=true&connection_limit=1`. NOT `db.<ref>.supabase.co` (that direct host is IPv6-only; Render is IPv4-only → P1001 unreachable). |
+   | `DIRECT_URL` | Only used by local `prisma db push`, never at runtime. Set it to the Supabase **session pooler** (pooler host, port 5432) or the direct URI — doesn't matter for Render since the container no longer runs db push. |
    | `ANTHROPIC_API_KEY` | Claude key (real scripts/metadata/review) |
    | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google OAuth client |
    | `GOOGLE_REDIRECT_URI` | `https://<service>.onrender.com/api/auth/google/callback` |
@@ -33,8 +33,9 @@ The Dockerfile installs both. Plan accordingly (see Caveats).
 
    `MOCK_MODE=false`, `NODE_ENV=production`, `CLAUDE_MODEL` are already in
    `render.yaml`. Do **not** put secrets in the file — dashboard only.
-4. Deploy. First boot runs `prisma db push` against Supabase, then starts.
-   Health check: `GET /api/health`.
+4. Deploy. The container just runs `npm start` (no db push on boot). Apply
+   schema changes out-of-band from a dev machine: `npx prisma db push`
+   against Supabase. The schema is already synced. Health: `GET /api/health`.
 5. Note the service URL, e.g. `https://flowtube-backend.onrender.com`.
 
 ## 2. Frontend on Vercel

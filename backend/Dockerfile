@@ -24,5 +24,9 @@ ENV NODE_ENV=production
 # Render injects $PORT; the app reads process.env.PORT (defaults to 4000).
 EXPOSE 4000
 
-# Sync schema to the (Supabase) DB on boot, then start. db push is idempotent.
-CMD ["sh", "-c", "npx prisma db push --skip-generate && npm start"]
+# Start the API. Schema changes are applied out-of-band via
+# `npx prisma db push` against Supabase (run from a dev machine) — NOT on
+# every boot: Prisma's db push needs DIRECT_URL, and Supabase's direct
+# connection is IPv6-only while Render is IPv4-only (P1001). Prisma Client
+# at runtime uses only the pooled DATABASE_URL, which Render can reach.
+CMD ["npm", "start"]
