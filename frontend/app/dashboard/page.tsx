@@ -14,6 +14,8 @@ import {
   type Channel,
   type Identity,
 } from '@/lib/api';
+import Logo from '@/components/Logo';
+import ThemeToggle from '@/components/ThemeToggle';
 
 const ERR_MSG: Record<string, string> = {
   session_expired: 'Session expired — sign in again before connecting.',
@@ -93,39 +95,56 @@ export default function AllChannelsPage() {
   );
 
   return (
-    <main className="mx-auto max-w-6xl px-6 py-8">
-      {/* Top bar */}
-      <div className="mb-10 flex items-center justify-between">
-        <span className="text-lg font-semibold">FlowTube</span>
-        <button
-          onClick={() => {
-            clearToken();
-            router.replace('/login');
-          }}
-          className="text-sm text-muted transition-colors hover:text-ink"
-        >
-          Sign out
-        </button>
-      </div>
-
-      <header className="mb-6 flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold">Your channels</h1>
-          <p className="mt-1 text-sm text-muted">
-            Pick a channel to open its workspace.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <button onClick={connectGoogle} className="btn-primary" title="Real Google OAuth">
-            + Connect Google account
-          </button>
-          {accountCount > 0 && (
-            <button onClick={detect} disabled={!!busy} className="btn-ghost">
-              {busy === 'detect' ? 'Scanning…' : 'Re-scan'}
+    <>
+      {/* Sticky app bar */}
+      <header className="sticky top-0 z-40 border-b border-border bg-bg/80 backdrop-blur-xl">
+        <div className="mx-auto flex h-16 max-w-6xl items-center justify-between gap-4 px-5 sm:px-8">
+          <Link href="/dashboard" className="flex items-center gap-2.5">
+            <Logo className="h-8 w-8" />
+            <span className="text-lg font-semibold tracking-tight">
+              Flow<span className="text-gradient">Tube</span>
+            </span>
+          </Link>
+          <div className="flex items-center gap-2">
+            <ThemeToggle />
+            <button
+              onClick={() => {
+                clearToken();
+                router.replace('/login');
+              }}
+              className="btn-ghost"
+            >
+              Sign out
             </button>
-          )}
+          </div>
         </div>
       </header>
+
+      <main className="mx-auto max-w-6xl px-5 py-8 sm:px-8">
+        <header className="mb-6 flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">
+              Your channels
+            </h1>
+            <p className="mt-1 text-sm text-muted">
+              Pick a channel to open its workspace.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={connectGoogle}
+              className="btn-primary"
+              title="Real Google OAuth"
+            >
+              + Connect Google account
+            </button>
+            {accountCount > 0 && (
+              <button onClick={detect} disabled={!!busy} className="btn-ghost">
+                {busy === 'detect' ? 'Scanning…' : 'Re-scan'}
+              </button>
+            )}
+          </div>
+        </header>
 
       {notice && (
         <div
@@ -206,7 +225,8 @@ export default function AllChannelsPage() {
           ))}
         </div>
       )}
-    </main>
+      </main>
+    </>
   );
 }
 
