@@ -6,9 +6,8 @@ import { useRouter } from 'next/navigation';
 import { api, setToken } from '@/lib/api';
 import AuthShell from '@/components/AuthShell';
 
-export default function RegisterPage() {
+export default function LoginPage() {
   const router = useRouter();
-  const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
@@ -19,7 +18,7 @@ export default function RegisterPage() {
     setBusy(true);
     setErr(null);
     try {
-      const { token } = await api.register(email, password, name);
+      const { token } = await api.login(email, password);
       setToken(token);
       router.push('/dashboard');
     } catch (e) {
@@ -29,20 +28,8 @@ export default function RegisterPage() {
   }
 
   return (
-    <AuthShell
-      title="Create your account"
-      subtitle="One account manages all your channels."
-    >
+    <AuthShell title="Welcome back" subtitle="Sign in to manage your channels.">
       <form onSubmit={submit} className="mt-8 flex flex-col gap-4">
-        <label className="text-sm">
-          <span className="eyebrow mb-1.5 block">Name</span>
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            className="field w-full"
-            placeholder="Your name"
-          />
-        </label>
         <label className="text-sm">
           <span className="eyebrow mb-1.5 block">Email</span>
           <input
@@ -59,11 +46,10 @@ export default function RegisterPage() {
           <input
             type="password"
             required
-            minLength={8}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             className="field w-full"
-            placeholder="At least 8 characters"
+            placeholder="••••••••"
           />
         </label>
         <button
@@ -71,7 +57,7 @@ export default function RegisterPage() {
           disabled={busy}
           className="btn-primary mt-1 w-full py-3"
         >
-          {busy ? 'Creating…' : 'Create account'}
+          {busy ? 'Signing in…' : 'Sign in'}
         </button>
       </form>
 
@@ -82,9 +68,9 @@ export default function RegisterPage() {
       )}
 
       <p className="mt-6 text-sm text-muted">
-        Already have an account?{' '}
-        <Link href="/login" className="font-medium text-accent">
-          Sign in
+        No account?{' '}
+        <Link href="/register" className="font-medium text-accent">
+          Create one free
         </Link>
       </p>
     </AuthShell>

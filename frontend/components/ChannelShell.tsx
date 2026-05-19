@@ -78,7 +78,7 @@ export default function ChannelShell({
         <button
           onClick={() => {
             clearToken();
-            router.replace('/');
+            router.replace('/login');
           }}
           className="mt-auto px-3 py-2 text-left text-sm text-muted transition-colors hover:text-ink"
         >

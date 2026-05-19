@@ -1,61 +1,248 @@
-@import url('https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&display=swap');
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-:root { color-scheme: dark; }
+/* ── Theme tokens (RGB channel triplets so Tailwind /opacity works) ── */
+:root {
+  --c-bg: 248 250 252;
+  --c-bg2: 241 245 249;
+  --c-surface: 255 255 255;
+  --c-surface2: 245 247 250;
+  --c-ink: 15 23 42;
+  --c-muted: 90 100 116;
+  --c-accent: 37 99 235;
+  --c-accent2: 124 58 237;
+  --c-viral: 5 150 105;
+  --c-danger: 220 38 38;
+  --c-border: 15 23 42;
+  --c-shadow: 15 23 42;
+  --border-a: 0.1;
+  color-scheme: light;
+}
 
-* { -webkit-font-smoothing: antialiased; }
+.dark {
+  --c-bg: 9 10 12;
+  --c-bg2: 15 16 19;
+  --c-surface: 19 21 24;
+  --c-surface2: 25 27 31;
+  --c-ink: 233 235 238;
+  --c-muted: 148 156 168;
+  --c-accent: 96 150 255;
+  --c-accent2: 167 139 250;
+  --c-viral: 52 211 153;
+  --c-danger: 248 113 113;
+  --c-border: 255 255 255;
+  --c-shadow: 0 0 0;
+  --border-a: 0.12;
+  color-scheme: dark;
+}
+
+* {
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+html {
+  scroll-behavior: smooth;
+}
 
 body {
   @apply bg-bg text-ink font-sans;
   min-height: 100vh;
+  transition: background-color 0.25s ease, color 0.25s ease;
 }
 
-::selection { background: rgba(79, 142, 247, 0.3); }
+::selection {
+  background: rgb(var(--c-accent) / 0.28);
+}
 
-::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.12); border-radius: 8px; }
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgb(var(--c-ink) / 0.18);
+  border-radius: 9px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--c-ink) / 0.3);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
 
 @layer base {
-  /* No separate display face — one clean sans throughout. */
-  .font-display { font-family: inherit; }
-  .nums { font-variant-numeric: tabular-nums; }
+  .font-display {
+    font-family: inherit;
+    letter-spacing: -0.02em;
+  }
+  .nums {
+    font-variant-numeric: tabular-nums;
+  }
+  h1,
+  h2,
+  h3 {
+    letter-spacing: -0.02em;
+  }
 }
 
 @layer components {
-  /* Flat card: solid surface, hairline border, no blur/shadow/gradient. */
   .glass {
-    @apply rounded-lg border border-border bg-surface;
+    @apply rounded-xl border border-border bg-surface shadow-card;
   }
   .glass-hover {
-    @apply transition-colors;
+    @apply transition-all duration-200;
   }
   .glass-hover:hover {
-    border-color: rgba(255, 255, 255, 0.18);
+    border-color: rgb(var(--c-accent) / 0.45);
+    transform: translateY(-2px);
   }
 
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-md px-4 py-2
-      text-sm font-medium transition-colors disabled:cursor-not-allowed
-      disabled:opacity-40;
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5
+      text-sm font-semibold transition-all duration-200 disabled:cursor-not-allowed
+      disabled:opacity-40 active:scale-[0.97];
   }
   .btn-primary {
-    @apply btn bg-accent text-white hover:brightness-110;
+    @apply btn text-white;
+    background-image: linear-gradient(
+      135deg,
+      rgb(var(--c-accent)),
+      rgb(var(--c-accent2))
+    );
+    box-shadow: 0 8px 24px -10px rgb(var(--c-accent) / 0.6);
+  }
+  .btn-primary:hover:not(:disabled) {
+    filter: brightness(1.08);
+    box-shadow: 0 12px 32px -10px rgb(var(--c-accent) / 0.75);
   }
   .btn-ghost {
-    @apply btn border border-border text-ink hover:bg-surface-2;
+    @apply btn border border-border bg-surface text-ink;
+  }
+  .btn-ghost:hover:not(:disabled) {
+    @apply bg-surface-2;
+    border-color: rgb(var(--c-accent) / 0.4);
   }
 
   .field {
-    @apply rounded-md border border-border bg-surface-2 px-3 py-2 text-sm
-      text-ink outline-none transition-colors focus:border-accent;
+    @apply w-full rounded-lg border border-border bg-surface-2 px-3.5 py-2.5 text-sm
+      text-ink outline-none transition-all duration-200 placeholder:text-muted/70;
+  }
+  .field:focus {
+    border-color: rgb(var(--c-accent));
+    box-shadow: 0 0 0 3px rgb(var(--c-accent) / 0.18);
   }
 
-  .hairline { @apply h-px w-full bg-border; }
-  /* Plain small label — no uppercase, no wide tracking. */
-  .eyebrow { @apply text-xs text-muted; }
+  .hairline {
+    @apply h-px w-full bg-border;
+  }
+  .eyebrow {
+    @apply text-xs font-medium uppercase tracking-wide text-muted;
+  }
   .tag {
-    @apply rounded border border-border px-2 py-0.5 text-xs text-muted;
+    @apply rounded-md border border-border bg-surface-2 px-2 py-0.5 text-xs text-muted;
+  }
+
+  .text-gradient {
+    background-image: linear-gradient(
+      120deg,
+      rgb(var(--c-accent)),
+      rgb(var(--c-accent2))
+    );
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .aurora-blob {
+    @apply pointer-events-none absolute rounded-full blur-3xl;
+    opacity: 0.5;
+  }
+  .dark .aurora-blob {
+    opacity: 0.35;
+  }
+
+  /* Page section wrapper — consistent responsive gutters + max width. */
+  .section {
+    @apply mx-auto w-full max-w-7xl px-5 sm:px-8 lg:px-10;
+  }
+
+  /* Frosted card used across the landing page. */
+  .card {
+    @apply rounded-2xl border border-border bg-surface/80 backdrop-blur-xl;
+  }
+
+  /* Subtle dotted/grid backdrop for hero + sections. */
+  .grid-bg {
+    background-image: radial-gradient(
+      rgb(var(--c-ink) / 0.06) 1px,
+      transparent 1px
+    );
+    background-size: 28px 28px;
+    -webkit-mask-image: radial-gradient(
+      ellipse 70% 60% at 50% 35%,
+      #000 40%,
+      transparent 100%
+    );
+    mask-image: radial-gradient(
+      ellipse 70% 60% at 50% 35%,
+      #000 40%,
+      transparent 100%
+    );
+  }
+
+  /* Pill / chip used for badges + nav. */
+  .pill {
+    @apply inline-flex items-center gap-2 rounded-full border border-border
+      bg-surface/70 px-3.5 py-1.5 text-xs font-medium text-muted backdrop-blur;
+  }
+
+  /* Fades the edges of the niche marquee. */
+  .edge-fade {
+    -webkit-mask-image: linear-gradient(
+      to right,
+      transparent,
+      #000 12%,
+      #000 88%,
+      transparent
+    );
+    mask-image: linear-gradient(
+      to right,
+      transparent,
+      #000 12%,
+      #000 88%,
+      transparent
+    );
+  }
+}
+
+@layer utilities {
+  /* Scroll-reveal: elements start hidden, .is-in flips them in. JS adds the
+     class via IntersectionObserver in the landing page. */
+  .reveal {
+    opacity: 0;
+    transform: translateY(22px);
+    transition:
+      opacity 0.7s cubic-bezier(0.16, 1, 0.3, 1),
+      transform 0.7s cubic-bezier(0.16, 1, 0.3, 1);
+    will-change: opacity, transform;
+  }
+  .reveal.is-in {
+    opacity: 1;
+    transform: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .reveal {
+      opacity: 1;
+      transform: none;
+    }
   }
 }

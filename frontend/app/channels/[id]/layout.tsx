@@ -22,7 +22,7 @@ export default function ChannelLayout({ children }: { children: React.ReactNode 
 
   useEffect(() => {
     if (!getToken()) {
-      router.replace('/');
+      router.replace('/login');
       return;
     }
     reload();

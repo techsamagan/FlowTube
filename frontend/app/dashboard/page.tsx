@@ -61,7 +61,7 @@ export default function AllChannelsPage() {
 
   useEffect(() => {
     if (!getToken()) {
-      router.replace('/');
+      router.replace('/login');
       return;
     }
     api.googleConfig().then((r) => setGoogleReady(r.configured)).catch(() => {});
@@ -100,7 +100,7 @@ export default function AllChannelsPage() {
         <button
           onClick={() => {
             clearToken();
-            router.replace('/');
+            router.replace('/login');
           }}
           className="text-sm text-muted transition-colors hover:text-ink"
         >
