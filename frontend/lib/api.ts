@@ -95,10 +95,11 @@ export const api = {
     topic: string,
     format: VideoFormat = 'short',
     upload = false,
+    calendarEntryId: string | null = null,
   ) =>
     req<VideoResult>('/generate/video', {
       method: 'POST',
-      body: JSON.stringify({ channelId, topic, format, upload }),
+      body: JSON.stringify({ channelId, topic, format, upload, calendarEntryId }),
     }),
   // Human gate: approve a reviewed video and publish it to YouTube.
   approveUpload: (videoId: string) =>
@@ -106,6 +107,13 @@ export const api = {
       `/generate/video/${videoId}/upload`,
       { method: 'POST' },
     ),
+  // Approve a reviewed video but defer the upload to a calendar entry's
+  // scheduledFor time. The scheduler publishes it when due.
+  scheduleVideo: (videoId: string, calendarEntryId: string) =>
+    req<{ entry: CalendarEntry }>(`/generate/video/${videoId}/schedule`, {
+      method: 'POST',
+      body: JSON.stringify({ calendarEntryId }),
+    }),
   calendar: (channelId: string) =>
     req<{ entries: CalendarEntry[] }>(`/calendar?channelId=${channelId}`),
   addCalendarEntry: (e: {
@@ -114,12 +122,34 @@ export const api = {
     topic: string;
     format: VideoFormat;
     notes?: string;
+    autoMode?: AutoMode;
   }) => req<{ entry: CalendarEntry }>('/calendar', { method: 'POST', body: JSON.stringify(e) }),
-  aiCalendar: (channelId: string, days = 14, format: VideoFormat = 'short') =>
+  aiCalendar: (
+    channelId: string,
+    days = 14,
+    format: VideoFormat = 'short',
+    autoMode: AutoMode = 'manual',
+  ) =>
     req<{ created: number; entries: CalendarEntry[] }>('/calendar/ai-generate', {
       method: 'POST',
-      body: JSON.stringify({ channelId, days, format }),
+      body: JSON.stringify({ channelId, days, format, autoMode }),
     }),
+  updateCalendarEntry: (
+    id: string,
+    patch: Partial<{
+      scheduledFor: string;
+      topic: string;
+      format: VideoFormat;
+      notes: string;
+      autoMode: AutoMode;
+    }>,
+  ) =>
+    req<{ entry: CalendarEntry }>(`/calendar/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }),
+  retryCalendarEntry: (id: string) =>
+    req<{ entry: CalendarEntry }>(`/calendar/${id}/retry`, { method: 'POST' }),
   deleteCalendarEntry: (id: string) =>
     req<{ ok: true }>(`/calendar/${id}`, { method: 'DELETE' }),
   scanTrends: (channelId: string) =>
@@ -220,6 +250,16 @@ export type VideoResult = {
   script: Script;
   metadata: Metadata;
 };
+export type AutoMode = 'manual' | 'auto';
+export type EntryStatus =
+  | 'planned'
+  | 'generating'
+  | 'ready'
+  | 'publishing'
+  | 'published'
+  | 'failed'
+  | 'generated'; // legacy rows pre-scheduler
+
 export type CalendarEntry = {
   id: string;
   channelId: string;
@@ -228,7 +268,9 @@ export type CalendarEntry = {
   format: VideoFormat;
   notes: string;
   source: 'manual' | 'ai';
-  status: 'planned' | 'generated' | 'published';
+  status: EntryStatus;
+  autoMode: AutoMode;
+  lastError: string | null;
   videoId: string | null;
 };
 export const FORMAT_LABELS: Record<VideoFormat, string> = {

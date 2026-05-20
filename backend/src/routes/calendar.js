@@ -24,6 +24,8 @@ function serialize(e) {
     notes: e.notes,
     source: e.source,
     status: e.status,
+    autoMode: e.autoMode ?? 'manual',
+    lastError: e.lastError ?? null,
     videoId: e.videoId,
   };
 }
@@ -46,7 +48,7 @@ router.get('/', async (req, res, next) => {
 // Add a manual calendar entry.
 router.post('/', async (req, res, next) => {
   try {
-    const { channelId, scheduledFor, topic, format, notes } = req.body ?? {};
+    const { channelId, scheduledFor, topic, format, notes, autoMode } = req.body ?? {};
     const channel = await ownedChannel(req, channelId);
     if (!channel) return res.status(404).json({ error: 'Channel not found' });
     if (!topic || !scheduledFor)
@@ -63,9 +65,62 @@ router.post('/', async (req, res, next) => {
         format: format === 'long' ? 'long' : 'short',
         notes: String(notes ?? '').slice(0, 500),
         source: 'manual',
+        autoMode: autoMode === 'auto' ? 'auto' : 'manual',
       },
     });
     res.json({ entry: serialize(entry) });
+  } catch (e) {
+    next(e);
+  }
+});
+
+// Edit an entry. Used by the UI to flip autoMode or change the time/topic.
+router.patch('/:id', async (req, res, next) => {
+  try {
+    const entry = await prisma.calendarEntry.findFirst({
+      where: { id: req.params.id, channel: { googleAccount: { userId: req.user.id } } },
+    });
+    if (!entry) return res.status(404).json({ error: 'Entry not found' });
+
+    const data = {};
+    if (typeof req.body?.topic === 'string') data.topic = req.body.topic.slice(0, 200);
+    if (typeof req.body?.notes === 'string') data.notes = req.body.notes.slice(0, 500);
+    if (req.body?.format) data.format = req.body.format === 'long' ? 'long' : 'short';
+    if (req.body?.autoMode)
+      data.autoMode = req.body.autoMode === 'auto' ? 'auto' : 'manual';
+    if (req.body?.scheduledFor) {
+      const when = new Date(req.body.scheduledFor);
+      if (Number.isNaN(when.getTime()))
+        return res.status(400).json({ error: 'Invalid scheduledFor date' });
+      data.scheduledFor = when;
+    }
+    const updated = await prisma.calendarEntry.update({
+      where: { id: entry.id },
+      data,
+    });
+    res.json({ entry: serialize(updated) });
+  } catch (e) {
+    next(e);
+  }
+});
+
+// Retry a failed row by moving it back to `planned` (auto-mode entries get
+// re-picked by the scheduler at next tick; manual entries can be generated
+// again from the UI).
+router.post('/:id/retry', async (req, res, next) => {
+  try {
+    const entry = await prisma.calendarEntry.findFirst({
+      where: { id: req.params.id, channel: { googleAccount: { userId: req.user.id } } },
+    });
+    if (!entry) return res.status(404).json({ error: 'Entry not found' });
+    const updated = await prisma.calendarEntry.update({
+      where: { id: entry.id },
+      data: {
+        status: entry.videoId ? 'ready' : 'planned',
+        lastError: null,
+      },
+    });
+    res.json({ entry: serialize(updated) });
   } catch (e) {
     next(e);
   }
@@ -79,6 +134,7 @@ router.post('/ai-generate', async (req, res, next) => {
     const days = Math.min(60, Math.max(1, Number(req.body?.days ?? 14)));
     const defaultFormat = req.body?.format === 'long' ? 'long' : 'short';
     const replace = req.body?.replace !== false; // default: replace AI entries
+    const autoMode = req.body?.autoMode === 'auto' ? 'auto' : 'manual';
     const channel = await ownedChannel(req, channelId);
     if (!channel) return res.status(404).json({ error: 'Channel not found' });
 
@@ -111,6 +167,7 @@ router.post('/ai-generate', async (req, res, next) => {
         format: defaultFormat,
         notes: pick.rationale?.slice(0, 500) ?? '',
         source: 'ai',
+        autoMode,
       });
       ti++;
     }

@@ -36,11 +36,13 @@ function ChannelGenerate() {
   const [format, setFormat] = useState<VideoFormat>(
     params.get('format') === 'long' ? 'long' : 'short',
   );
+  const entryId = params.get('entryId');
   const [step, setStep] = useState(-1);
   const [result, setResult] = useState<VideoResult | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // 'idle' | 'uploading' | 'scheduling' | 'done' | 'scheduled' | 'error'
   const [uploadState, setUploadState] = useState<
-    { status: 'idle' | 'uploading' | 'done' | 'error'; note?: string; url?: string }
+    { status: 'idle' | 'uploading' | 'scheduling' | 'done' | 'scheduled' | 'error'; note?: string; url?: string }
   >({ status: 'idle' });
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -61,7 +63,7 @@ function ChannelGenerate() {
     }, tick);
 
     try {
-      const r = await api.generateVideo(channel.id, topic, format, false);
+      const r = await api.generateVideo(channel.id, topic, format, false, entryId);
       if (timer.current) clearInterval(timer.current);
       setResult(r);
       setStep(STEPS.length);
@@ -78,6 +80,22 @@ function ChannelGenerate() {
     try {
       const r = await api.approveUpload(result.videoId);
       setUploadState({ status: 'done', note: r.uploadNote, url: r.youtube.url });
+    } catch (e) {
+      setUploadState({ status: 'error', note: (e as Error).message });
+    }
+  }
+
+  // "Approve, but publish at the calendar time" — binds this video to the
+  // entry; scheduler uploads when due.
+  async function approveAndSchedule() {
+    if (!result || !entryId) return;
+    setUploadState({ status: 'scheduling' });
+    try {
+      await api.scheduleVideo(result.videoId, entryId);
+      setUploadState({
+        status: 'scheduled',
+        note: 'Queued. FlowTube will publish this at the scheduled calendar time.',
+      });
     } catch (e) {
       setUploadState({ status: 'error', note: (e as Error).message });
     }
@@ -243,11 +261,18 @@ function ChannelGenerate() {
                         Open on YouTube ↗
                       </a>
                     </div>
+                  ) : uploadState.status === 'scheduled' ? (
+                    <div className="rounded-lg border border-viral/30 bg-viral/10 p-3 text-sm text-viral">
+                      ✓ {uploadState.note}
+                    </div>
                   ) : result.canUpload ? (
                     <div className="space-y-2">
                       <button
                         onClick={approveAndUpload}
-                        disabled={uploadState.status === 'uploading'}
+                        disabled={
+                          uploadState.status === 'uploading' ||
+                          uploadState.status === 'scheduling'
+                        }
                         className="btn-primary w-full"
                       >
                         {uploadState.status === 'uploading'
@@ -256,12 +281,28 @@ function ChannelGenerate() {
                             ? 'Approve & upload to YouTube'
                             : 'Upload anyway (override review)'}
                       </button>
+                      {/* Schedule path — only when we came from a calendar row */}
+                      {entryId && (
+                        <button
+                          onClick={approveAndSchedule}
+                          disabled={
+                            uploadState.status === 'uploading' ||
+                            uploadState.status === 'scheduling'
+                          }
+                          className="btn-ghost w-full"
+                        >
+                          {uploadState.status === 'scheduling'
+                            ? 'Scheduling…'
+                            : 'Approve & publish at calendar time'}
+                        </button>
+                      )}
                       {uploadState.status === 'error' && (
                         <p className="text-sm text-danger">{uploadState.note}</p>
                       )}
                       <p className="text-center text-xs text-muted">
-                        Nothing is published until you approve. Uploads are
-                        private by default.
+                        {entryId
+                          ? 'Approve to publish now, or schedule for the calendar time.'
+                          : 'Nothing is published until you approve. Uploads are private by default.'}
                       </p>
                     </div>
                   ) : (

@@ -7,6 +7,7 @@ import generateRoutes, { MEDIA_DIR } from './routes/generate.js';
 import analysisRoutes from './routes/analysis.js';
 import calendarRoutes from './routes/calendar.js';
 import accountRoutes from './routes/accounts.js';
+import { startScheduler } from './services/scheduler.js';
 
 const app = express();
 app.use(cors({ origin: env.FRONTEND_URL, credentials: true }));
@@ -43,4 +44,10 @@ app.use((err, _req, res, _next) => {
 app.listen(env.PORT, () => {
   // eslint-disable-next-line no-console
   console.log(`🚀 FlowTube API on http://localhost:${env.PORT} (mock=${MOCK_MODE})`);
+  // Calendar scheduler: renders + publishes due auto entries, and uploads
+  // pre-approved ready entries at their scheduled time. Skipped in mock mode
+  // (the schema there is in-memory / fixtures and DB writes are stubbed).
+  if (!MOCK_MODE) {
+    startScheduler().catch((e) => console.error('[scheduler] failed to start:', e));
+  }
 });

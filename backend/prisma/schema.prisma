@@ -146,7 +146,13 @@ model CalendarEntry {
   format       String  @default("short") // "short" | "long"
   notes        String  @default("")
   source       String  @default("manual") // "manual" | "ai"
-  status       String  @default("planned") // planned | generated | published
+  // planned → generating → ready → publishing → published, or failed.
+  // "ready" = video rendered + approved, waiting for scheduled publish time.
+  status       String  @default("planned")
+  // "manual" = wait for user; "auto" = scheduler renders + uploads at scheduledFor.
+  autoMode     String  @default("manual")
+  // Last failure reason, surfaced in the UI for retry.
+  lastError    String?
 
   video   Video?  @relation(fields: [videoId], references: [id], onDelete: SetNull)
   videoId String? @unique
