@@ -128,7 +128,7 @@ export const api = {
     channelId: string,
     days = 14,
     format: VideoFormat = 'short',
-    autoMode: AutoMode = 'manual',
+    autoMode: AutoMode = 'auto',
   ) =>
     req<{ created: number; entries: CalendarEntry[] }>('/calendar/ai-generate', {
       method: 'POST',

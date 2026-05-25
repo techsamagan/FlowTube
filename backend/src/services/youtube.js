@@ -47,8 +47,10 @@ export async function uploadShort({ accessToken, refreshToken, videoPath, metada
         categoryId: '22', // People & Blogs
       },
       status: {
-        // Automated upload → default to private; the operator publishes/schedules.
-        privacyStatus: 'private',
+        // Auto-publish: video goes live the moment the scheduler uploads it.
+        // The scheduler is what enforces "release at the calendar time" — so
+        // uploading `public` at that moment is the calendar-driven release.
+        privacyStatus: 'public',
         selfDeclaredMadeForKids: false,
       },
     },

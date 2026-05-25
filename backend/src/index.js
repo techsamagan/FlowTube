@@ -7,7 +7,9 @@ import generateRoutes, { MEDIA_DIR } from './routes/generate.js';
 import analysisRoutes from './routes/analysis.js';
 import calendarRoutes from './routes/calendar.js';
 import accountRoutes from './routes/accounts.js';
+import schedulerRoutes from './routes/scheduler.js';
 import { startScheduler } from './services/scheduler.js';
+import { ensureSchema } from './lib/dbMigrate.js';
 
 const app = express();
 app.use(cors({ origin: env.FRONTEND_URL, credentials: true }));
@@ -26,6 +28,7 @@ app.use('/api/generate', generateRoutes);
 app.use('/api/analysis', analysisRoutes);
 app.use('/api/calendar', calendarRoutes);
 app.use('/api/accounts', accountRoutes);
+app.use('/api/scheduler', schedulerRoutes);
 
 // 404 for unmatched API routes (JSON, not Express's HTML page).
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found' }));
@@ -44,10 +47,19 @@ app.use((err, _req, res, _next) => {
 app.listen(env.PORT, () => {
   // eslint-disable-next-line no-console
   console.log(`🚀 FlowTube API on http://localhost:${env.PORT} (mock=${MOCK_MODE})`);
-  // Calendar scheduler: renders + publishes due auto entries, and uploads
-  // pre-approved ready entries at their scheduled time. Skipped in mock mode
-  // (the schema there is in-memory / fixtures and DB writes are stubbed).
+  // Real-mode boot: apply any pending schema bumps via the pooled DATABASE_URL
+  // (Render can't run `prisma db push` — see lib/dbMigrate.js), then start the
+  // calendar scheduler. Skipped in mock mode (schema is in-memory / stubbed).
   if (!MOCK_MODE) {
-    startScheduler().catch((e) => console.error('[scheduler] failed to start:', e));
+    (async () => {
+      await ensureSchema().catch((e) =>
+        // eslint-disable-next-line no-console
+        console.error('[db-migrate] failed to start:', e),
+      );
+      await startScheduler().catch((e) =>
+        // eslint-disable-next-line no-console
+        console.error('[scheduler] failed to start:', e),
+      );
+    })();
   }
 });

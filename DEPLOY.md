@@ -30,12 +30,17 @@ The Dockerfile installs both. Plan accordingly (see Caveats).
    | `PEXELS_API_KEY` | B-roll |
    | `PIXABAY_API_KEY` | (music synth is procedural; key currently unused) |
    | `YOUTUBE_API_KEY` | optional — trend search |
+   | `SCHEDULER_SECRET` | **auto-generated** by `render.yaml` (`generateValue`). Protects `POST /api/scheduler/run`. Nothing to set — read it from the dashboard only if you want to drive the scheduler from an external cron. |
 
    `MOCK_MODE=false`, `NODE_ENV=production`, `CLAUDE_MODEL` are already in
    `render.yaml`. Do **not** put secrets in the file — dashboard only.
-4. Deploy. The container just runs `npm start` (no db push on boot). Apply
-   schema changes out-of-band from a dev machine: `npx prisma db push`
-   against Supabase. The schema is already synced. Health: `GET /api/health`.
+4. Deploy. The container runs `npm start`. On boot it applies any pending
+   schema bumps via the pooled `DATABASE_URL` (see `backend/src/lib/dbMigrate.js`)
+   — Render itself can't run `prisma db push` because that needs `DIRECT_URL`
+   and Supabase's direct host is IPv6-only (P1001). When you change
+   `schema.prisma`, append the matching `ALTER TABLE … IF NOT EXISTS` to
+   `dbMigrate.js`'s `STATEMENTS` list in the same commit; the next deploy
+   picks it up. Health: `GET /api/health`.
 5. Note the service URL, e.g. `https://flowtube-backend.onrender.com`.
 
 ## 2. Frontend on Vercel
@@ -60,6 +65,13 @@ The Dockerfile installs both. Plan accordingly (see Caveats).
 
 ## Caveats (read before relying on this)
 
+- **Autonomous publishing depends on the web service staying up.** The
+  calendar scheduler runs *inside* the backend process (a 60 s interval) and
+  publishes due `auto` entries on its own — no browser needed. It only ticks
+  while that process is awake, so a **non-sleeping plan is required**: the
+  **free** plan sleeps when idle and the scheduler stops until traffic wakes
+  it. `starter`+ runs 24/7. For extra redundancy, point an external cron /
+  uptime monitor at `POST /api/scheduler/run` (auth: `SCHEDULER_SECRET`).
 - **Render plan / RAM.** FFmpeg + edge-tts is CPU/RAM heavy. The **free**
   plan (512 MB, 0.1 CPU, sleeps when idle) will be slow and can OOM on
   long-form renders. `render.yaml` defaults to **`starter`** (paid) as the

@@ -65,7 +65,9 @@ router.post('/', async (req, res, next) => {
         format: format === 'long' ? 'long' : 'short',
         notes: String(notes ?? '').slice(0, 500),
         source: 'manual',
-        autoMode: autoMode === 'auto' ? 'auto' : 'manual',
+        // Autonomous by default: the scheduler renders + uploads it at the
+        // scheduled time. Pass autoMode:'manual' to keep a human review gate.
+        autoMode: autoMode === 'manual' ? 'manual' : 'auto',
       },
     });
     res.json({ entry: serialize(entry) });
@@ -134,7 +136,8 @@ router.post('/ai-generate', async (req, res, next) => {
     const days = Math.min(60, Math.max(1, Number(req.body?.days ?? 14)));
     const defaultFormat = req.body?.format === 'long' ? 'long' : 'short';
     const replace = req.body?.replace !== false; // default: replace AI entries
-    const autoMode = req.body?.autoMode === 'auto' ? 'auto' : 'manual';
+    // Default to autonomous: an AI-generated plan should publish itself.
+    const autoMode = req.body?.autoMode === 'manual' ? 'manual' : 'auto';
     const channel = await ownedChannel(req, channelId);
     if (!channel) return res.status(404).json({ error: 'Channel not found' });
 

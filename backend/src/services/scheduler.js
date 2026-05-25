@@ -1,19 +1,25 @@
-// Calendar scheduler. A single Node interval is enough for the one-instance
-// Render deployment; each tick:
-//   1. Recovers from crashes (any row stuck in *ing → previous state).
-//   2. Renders + publishes due `planned + auto` entries.
-//   3. Publishes due `ready` entries (rendered + approved earlier, waiting).
+// Calendar scheduler — the autonomous engine behind the planner.
+//
+// It runs entirely server-side: once the backend process is up it keeps
+// rendering and publishing scheduled videos whether or not anyone has the
+// website open. A single Node interval drives it on the one-instance Render
+// deployment; each cycle:
+//   1. Renders + publishes every due `planned + auto` entry.
+//   2. Publishes every due `ready` entry (rendered + approved earlier).
+// Crash recovery runs once at boot (any row stuck *ing → previous state).
 //
 // Concurrency: rows are claimed via `updateMany` with a status guard so two
-// ticks (or two pods) can't double-process the same entry.
+// cycles can't double-process the same entry, and a process-local mutex
+// serialises cycles so the interval and an on-demand `POST /api/scheduler/run`
+// never overlap.
 
 import { prisma } from '../lib/prisma.js';
 import { renderVideo, publishVideoToYouTube, publicBaseUrl } from './videoPipeline.js';
 
 const TICK_MS = 60_000;
+const BATCH = 25; // due rows pulled per cycle; leftovers roll to the next tick
 let timer = null;
-let runningCount = 0;
-const MAX_CONCURRENT = 1; // video rendering is CPU/RAM heavy, keep it serial
+let busy = false; // process-local mutex — true while a cycle is running
 
 async function claim(entryId, fromStatus, toStatus) {
   const r = await prisma.calendarEntry.updateMany({
@@ -80,45 +86,54 @@ async function processReadyPublish(entry) {
   }
 }
 
-async function tick() {
-  if (runningCount >= MAX_CONCURRENT) return;
-  runningCount++;
+// Process everything due right now (up to BATCH). Auto rows are rendered +
+// published in one go; ready rows are upload-only.
+async function drain() {
+  const now = new Date();
+  const due = await prisma.calendarEntry.findMany({
+    where: {
+      scheduledFor: { lte: now },
+      OR: [
+        { status: 'planned', autoMode: 'auto' },
+        { status: 'ready' }, // approved earlier, waiting for its slot
+      ],
+    },
+    orderBy: { scheduledFor: 'asc' },
+    take: BATCH,
+  });
+
+  for (const entry of due) {
+    if (entry.status === 'planned') await processAutoRender(entry);
+    else await processReadyPublish(entry);
+  }
+  return { processed: due.length };
+}
+
+// Run one scheduler cycle behind the process-local mutex. Safe to call from
+// the interval and from the HTTP trigger; an overlapping call is a no-op.
+export async function runSchedulerCycle({ trigger = 'interval' } = {}) {
+  if (busy) return { skipped: true, reason: 'a scheduler cycle is already running' };
+  busy = true;
   try {
-    const now = new Date();
-
-    // 1. Pull a small batch of due rows. Auto rows are rendered+published in
-    //    one go; ready rows are upload-only and run in parallel with render
-    //    in future ticks if we ever raise MAX_CONCURRENT.
-    const due = await prisma.calendarEntry.findMany({
-      where: {
-        scheduledFor: { lte: now },
-        status: { in: ['planned', 'ready'] },
-        OR: [
-          { status: 'planned', autoMode: 'auto' },
-          { status: 'ready' }, // manual-mode entries already pre-approved
-        ],
-      },
-      orderBy: { scheduledFor: 'asc' },
-      take: 5,
-    });
-
-    for (const entry of due) {
-      if (entry.status === 'planned' && entry.autoMode === 'auto') {
-        await processAutoRender(entry);
-      } else if (entry.status === 'ready') {
-        await processReadyPublish(entry);
-      }
+    const r = await drain();
+    if (r.processed > 0) {
+      // eslint-disable-next-line no-console
+      console.log(
+        `[scheduler] ${trigger}: processed ${r.processed} due entr${r.processed === 1 ? 'y' : 'ies'}`,
+      );
     }
+    return { skipped: false, ...r };
   } catch (e) {
     // eslint-disable-next-line no-console
-    console.error('[scheduler] tick error:', e);
+    console.error('[scheduler] cycle error:', e);
+    return { skipped: false, error: String(e?.message ?? e) };
   } finally {
-    runningCount--;
+    busy = false;
   }
 }
 
 // Crash recovery: on boot, reset anything caught mid-action back to its
-// previous waiting state so the next tick can retry.
+// previous waiting state so the next cycle can retry.
 async function recover() {
   await prisma.calendarEntry
     .updateMany({ where: { status: 'generating' }, data: { status: 'planned' } })
@@ -132,12 +147,10 @@ export async function startScheduler() {
   if (timer) return; // already started
   await recover();
   // eslint-disable-next-line no-console
-  console.log('[scheduler] started, tick =', TICK_MS, 'ms');
+  console.log(`[scheduler] started — autonomous publishing every ${TICK_MS / 1000}s`);
   // Fire once shortly after boot, then on the interval.
-  timer = setInterval(() => {
-    void tick();
-  }, TICK_MS);
-  setTimeout(() => void tick(), 5_000);
+  timer = setInterval(() => void runSchedulerCycle({ trigger: 'interval' }), TICK_MS);
+  setTimeout(() => void runSchedulerCycle({ trigger: 'boot' }), 5_000);
 }
 
 export function stopScheduler() {

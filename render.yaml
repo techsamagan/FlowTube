@@ -47,3 +47,8 @@ services:
         sync: false
       - key: YOUTUBE_API_KEY       # optional; trend search
         sync: false
+      # Protects POST /api/scheduler/run — the on-demand publish trigger.
+      # Render generates a random value; read it from the dashboard if you
+      # want to drive the scheduler from an external cron / uptime monitor.
+      - key: SCHEDULER_SECRET
+        generateValue: true

@@ -63,14 +63,15 @@ export default function ChannelCalendar() {
   const [entries, setEntries] = useState<CalendarEntry[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [aiBusy, setAiBusy] = useState(false);
-  const [aiAuto, setAiAuto] = useState(false);
+  // Autonomous by default — the AI plan publishes itself.
+  const [aiAuto, setAiAuto] = useState(true);
 
   // Manual-add form
   const [date, setDate] = useState('');
   const [topic, setTopic] = useState('');
   const [format, setFormat] = useState<VideoFormat>('short');
   const [notes, setNotes] = useState('');
-  const [autoMode, setAutoMode] = useState<AutoMode>('manual');
+  const [autoMode, setAutoMode] = useState<AutoMode>('auto');
   const [adding, setAdding] = useState(false);
 
   const load = useCallback(() => {
@@ -164,9 +165,11 @@ export default function ChannelCalendar() {
           </h1>
           <p className="mt-1 max-w-2xl text-sm text-muted">
             Plan posts for <span className="text-ink">{channel.name}</span>.
-            Flip <span className="text-ink">Auto-publish</span> on a row and
-            FlowTube will render and upload it at the scheduled time without
-            you lifting a finger.
+            Every entry is set to <span className="text-ink">Auto-publish</span>{' '}
+            — FlowTube renders and uploads it to YouTube at the scheduled time
+            on its own, even while you&apos;re away. Switch a row to{' '}
+            <span className="text-ink">Review first</span> if you&apos;d rather
+            approve it yourself.
           </p>
         </div>
         <div className="flex flex-col items-end gap-1.5">
@@ -180,7 +183,7 @@ export default function ChannelCalendar() {
               onChange={(e) => setAiAuto(e.target.checked)}
               className="h-3.5 w-3.5 accent-accent"
             />
-            Auto-publish AI plan (no review)
+            Auto-publish the AI plan (uncheck to review each video first)
           </label>
         </div>
       </header>
