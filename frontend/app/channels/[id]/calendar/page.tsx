@@ -65,6 +65,8 @@ export default function ChannelCalendar() {
   const [aiBusy, setAiBusy] = useState(false);
   // Autonomous by default — the AI plan publishes itself.
   const [aiAuto, setAiAuto] = useState(true);
+  // How far ahead the AI plan reaches. Backend caps at 730 days.
+  const [aiDays, setAiDays] = useState(14);
 
   // Manual-add form
   const [date, setDate] = useState('');
@@ -124,7 +126,7 @@ export default function ChannelCalendar() {
     setAiBusy(true);
     setErr(null);
     try {
-      const r = await api.aiCalendar(channel.id, 14, 'short', aiAuto ? 'auto' : 'manual');
+      const r = await api.aiCalendar(channel.id, aiDays, 'short', aiAuto ? 'auto' : 'manual');
       setEntries(r.entries);
       if (r.created === 0)
         setErr('AI added no slots — try a wider window or scan trends first.');
@@ -173,9 +175,25 @@ export default function ChannelCalendar() {
           </p>
         </div>
         <div className="flex flex-col items-end gap-1.5">
-          <button onClick={generateAi} disabled={aiBusy} className="btn-primary">
-            {aiBusy ? 'Generating…' : '✨ Generate with AI (14 days)'}
-          </button>
+          <div className="flex items-center gap-2">
+            <select
+              value={aiDays}
+              onChange={(e) => setAiDays(Number(e.target.value))}
+              className="field text-xs"
+              aria-label="Plan length"
+            >
+              <option value={7}>7 days</option>
+              <option value={14}>14 days</option>
+              <option value={30}>30 days</option>
+              <option value={90}>3 months</option>
+              <option value={180}>6 months</option>
+              <option value={365}>1 year</option>
+              <option value={730}>2 years</option>
+            </select>
+            <button onClick={generateAi} disabled={aiBusy} className="btn-primary">
+              {aiBusy ? 'Generating…' : '✨ Generate with AI'}
+            </button>
+          </div>
           <label className="flex cursor-pointer items-center gap-2 text-xs text-muted">
             <input
               type="checkbox"

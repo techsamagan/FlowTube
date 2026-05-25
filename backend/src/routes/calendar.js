@@ -133,7 +133,10 @@ router.post('/:id/retry', async (req, res, next) => {
 router.post('/ai-generate', async (req, res, next) => {
   try {
     const { channelId } = req.body ?? {};
-    const days = Math.min(60, Math.max(1, Number(req.body?.days ?? 14)));
+    // Cap at 2 years. Going further is technically fine (the scheduler only
+    // ever processes due rows) but trend data driving the plan is fresh for
+    // weeks at best — pick a topic for May 2028 today and it'll be stale.
+    const days = Math.min(730, Math.max(1, Number(req.body?.days ?? 14)));
     const defaultFormat = req.body?.format === 'long' ? 'long' : 'short';
     const replace = req.body?.replace !== false; // default: replace AI entries
     // Default to autonomous: an AI-generated plan should publish itself.
