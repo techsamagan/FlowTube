@@ -17,7 +17,10 @@ import { prisma } from '../lib/prisma.js';
 import { renderVideo, publishVideoToYouTube, publicBaseUrl } from './videoPipeline.js';
 
 const TICK_MS = 60_000;
-const BATCH = 25; // due rows pulled per cycle; leftovers roll to the next tick
+// Due rows pulled per cycle. Renders are sequential (see drain()) so a large
+// batch ties the cycle up for the whole batch; keep it small so one slow
+// render doesn't starve the publish path. Leftovers roll to the next tick.
+const BATCH = 3;
 let timer = null;
 let busy = false; // process-local mutex — true while a cycle is running
 
@@ -111,12 +114,17 @@ async function drain() {
     take: BATCH,
   });
 
-  // Start background renders for entries in advance horizon
+  // Render advance-horizon entries SEQUENTIALLY. Each render spawns FFmpeg
+  // processes (~100-200 MB resident); running BATCH renders in parallel will
+  // OOM Render's Starter plan (512 MB). The outer cycle's `busy` mutex caps
+  // overlap, so awaiting here keeps memory bounded to one render at a time.
   for (const entry of toGenerate) {
-    processAutoRender(entry).catch((e) => {
+    try {
+      await processAutoRender(entry);
+    } catch (e) {
       // eslint-disable-next-line no-console
       console.error(`[scheduler] Background advance render failed for entry ${entry.id}:`, e);
-    });
+    }
   }
 
   // 2. Due for publishing now
@@ -136,11 +144,13 @@ async function drain() {
     if (entry.status === 'ready') {
       await processReadyPublish(entry);
     } else if (entry.status === 'planned') {
-      // Just in case it wasn't rendered in advance, render and publish in background
-      processAutoRender(entry).catch((e) => {
+      // Sequential — same memory-bound rationale as the advance loop above.
+      try {
+        await processAutoRender(entry);
+      } catch (e) {
         // eslint-disable-next-line no-console
         console.error(`[scheduler] Background render-publish failed for entry ${entry.id}:`, e);
-      });
+      }
     }
   }
 
