@@ -13,15 +13,26 @@ export async function uploadShort({ accessToken, refreshToken, videoPath, metada
   if (!accessToken || accessToken.startsWith('mock-') || accessToken.startsWith('seed')) {
     throw new Error('Upload needs a real OAuth-connected channel');
   }
+
+  // Decrypt the stored refresh token. If decryption returns null the token
+  // is either missing or was encrypted with a different TOKEN_ENC_KEY.
+  // In both cases we stop here with a clear reconnect message rather than
+  // letting googleapis fire a cryptic internal error.
+  const decryptedRefreshToken = refreshToken ? decrypt(refreshToken) : null;
+  if (!decryptedRefreshToken) {
+    throw new Error(
+      'YouTube refresh token is missing or could not be decrypted. ' +
+      'Please go to Settings → Connected Accounts and reconnect your Google account to fix this.',
+    );
+  }
+
   const auth = oauthClient();
-  // The stored access token is short-lived (~1h). Seeding it would make
-  // google-auth-library treat it as valid (no expiry_date) and skip the
-  // refresh → 401 "Invalid Credentials". Set ONLY the refresh token and
-  // force a fresh access token from it before uploading.
-  auth.setCredentials({ refresh_token: decrypt(refreshToken) });
+  // Set ONLY the refresh token and force a fresh access token before uploading.
+  // Never seed the short-lived access token — it causes 401 once it expires.
+  auth.setCredentials({ refresh_token: decryptedRefreshToken });
   try {
     const { token } = await auth.getAccessToken();
-    if (!token) throw new Error('no access token returned');
+    if (!token) throw new Error('Google returned an empty access token — try reconnecting.');
   } catch (e) {
     throw new Error(`YouTube token refresh failed: ${e.message}`);
   }

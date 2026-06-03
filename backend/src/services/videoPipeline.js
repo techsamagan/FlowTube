@@ -49,13 +49,16 @@ export async function generateSceneVisual(prompt, channel) {
 
 // True if this channel's account can actually publish to YouTube. Mock/seed
 // accounts are rejected so we never try to upload with placeholder tokens.
+// Also requires a stored refresh token — a missing token means the user
+// must reconnect their Google account before publishing.
 export function canUpload(channel) {
   const a = channel.googleAccount;
   return Boolean(
     a?.accessToken &&
       !a.accessToken.startsWith('mock-') &&
       !a.accessToken.startsWith('seed') &&
-      !String(channel.channelId).startsWith('seed'),
+      !String(channel.channelId).startsWith('seed') &&
+      a.refreshTokenEnc, // must have a refresh token stored
   );
 }
 
