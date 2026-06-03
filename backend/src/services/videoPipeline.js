@@ -8,7 +8,7 @@
 //   - publishVideoToYouTube: takes a rendered Video, uploads it, marks
 //                            the linked CalendarEntry published.
 
-import { mkdir } from 'node:fs/promises';
+import { mkdir, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { prisma } from '../lib/prisma.js';
@@ -20,6 +20,13 @@ import { assembleVideo, generateMockClip } from './ffmpeg.js';
 import { uploadShort } from './youtube.js';
 import { generateBaseImage } from './imageProviders.js';
 import { animateImage } from './videoProviders.js';
+import {
+  isStorageConfigured,
+  uploadVideo,
+  downloadVideo,
+  signedUrl,
+  videoKey,
+} from './storage.js';
 
 const STORAGE = path.join(fileURLToPath(new URL('../../storage', import.meta.url)));
 export const MEDIA_DIR = path.join(STORAGE, 'media');
@@ -36,11 +43,18 @@ export async function generateSceneVisual(prompt, channel) {
   // Step 2: Animate the image, or fallback to Pexels search if videoProvider is 'NONE'
   const videoProvider = channel.videoProvider || 'KLING';
   if (videoProvider === 'NONE') {
-    console.log(`[videoPipeline] videoProvider is NONE. Falling back to Pexels stock B-roll search for keyword.`);
-    // Get up to 3 words from prompt as keywords
+    // Pexels stock B-roll — only viable when MOCK_MODE is off AND a Pexels
+    // key is configured. Otherwise return the local-mock sentinel so the
+    // caller renders a placeholder clip with FFmpeg (matches the fallback
+    // every other provider already uses on missing keys).
     const keywords = prompt.replace(/[^a-zA-Z0-9\s]/g, '').split(/\s+/).filter(w => w.length > 3).slice(0, 3).join(' ') || channel.niche;
-    const links = await searchBroll(keywords, 1);
-    return links[0];
+    try {
+      const links = await searchBroll(keywords, 1);
+      return links[0];
+    } catch (e) {
+      console.warn(`[videoPipeline] Pexels stock B-roll unavailable (${e.message}). Using local mock clip.`);
+      return 'mock:generate';
+    }
   }
 
   // Animate image using the video provider
@@ -65,7 +79,7 @@ export function canUpload(channel) {
 // Render-only. Creates a Video row in `ready` (or `failed`) status and
 // returns the same shape the /generate/video route has always returned.
 // `baseUrl` is the absolute origin used to build the public videoUrl.
-export async function renderVideo({ channel, topic, format = 'short', baseUrl, calendarEntryId = null }) {
+export async function renderVideo({ channel, topic, format = 'short', baseUrl, calendarEntryId = null, existingVideoId = null }) {
   const fmt = format === 'long' ? 'long' : 'short';
   const spec = formatSpec(fmt);
 
@@ -80,18 +94,31 @@ export async function renderVideo({ channel, topic, format = 'short', baseUrl, c
   });
   const metadata = await generateMetadata({ script, niche: channel.niche });
 
-  const video = await prisma.video.create({
-    data: {
-      channelId: channel.id,
-      script: script.fullScript,
-      scriptMeta: script,
-      title: metadata.title,
-      description: metadata.description,
-      tags: metadata.tags,
-      format: fmt,
-      status: 'generating',
-    },
-  });
+  // Either fill in the placeholder row the route created for polling, or
+  // create a fresh one (scheduler path / direct callers).
+  const video = existingVideoId
+    ? await prisma.video.update({
+        where: { id: existingVideoId },
+        data: {
+          script: script.fullScript,
+          scriptMeta: script,
+          title: metadata.title,
+          description: metadata.description,
+          tags: metadata.tags,
+        },
+      })
+    : await prisma.video.create({
+        data: {
+          channelId: channel.id,
+          script: script.fullScript,
+          scriptMeta: script,
+          title: metadata.title,
+          description: metadata.description,
+          tags: metadata.tags,
+          format: fmt,
+          status: 'generating',
+        },
+      });
 
   // Link to the calendar entry up-front so the entry knows about the in-progress
   // video even if a later step fails. (Fixes the prior bug where calendar rows
@@ -168,7 +195,18 @@ export async function renderVideo({ channel, topic, format = 'short', baseUrl, c
       outPath,
     });
 
-    const mediaUrl = `${baseUrl.replace(/\/$/, '')}/media/${video.id}.mp4`;
+    // Persist the rendered MP4 off the ephemeral container disk so a Render
+    // restart between render and publish can't lose it. When the bucket isn't
+    // configured we keep the legacy local-served URL — dev mode keeps working.
+    let storageKey = null;
+    let mediaUrl;
+    if (isStorageConfigured()) {
+      storageKey = videoKey(video.id);
+      await uploadVideo(outPath, storageKey);
+      mediaUrl = await signedUrl(storageKey);
+    } else {
+      mediaUrl = `${baseUrl.replace(/\/$/, '')}/media/${video.id}.mp4`;
+    }
 
     // 5. AI pre-upload quality gate — "prove it is good or not".
     const review = await reviewVideo({
@@ -184,6 +222,7 @@ export async function renderVideo({ channel, topic, format = 'short', baseUrl, c
         status: 'ready',
         voiceoverUrl: mediaUrl,
         videoUrl: mediaUrl,
+        storageKey,
         reviewMeta: review,
       },
     });
@@ -229,7 +268,18 @@ export async function publishVideoToYouTube({ videoId }) {
     throw new Error('Connect a real Google channel to publish.');
   }
 
-  const outPath = path.join(MEDIA_DIR, `${video.id}.mp4`);
+  // Prefer the bucket copy if one exists — it survives container restarts
+  // that wipe the local /storage/media file. Falls back to the local path
+  // for legacy rows rendered before storage was wired up.
+  const localPath = path.join(MEDIA_DIR, `${video.id}.mp4`);
+  let outPath = localPath;
+  let downloadedTemp = false;
+  if (video.storageKey) {
+    await mkdir(MEDIA_DIR, { recursive: true });
+    await downloadVideo(video.storageKey, localPath);
+    downloadedTemp = true;
+  }
+
   const yt = await uploadShort({
     accessToken: video.channel.googleAccount.accessToken,
     refreshToken: video.channel.googleAccount.refreshTokenEnc,
@@ -237,6 +287,12 @@ export async function publishVideoToYouTube({ videoId }) {
     metadata: { title: video.title, description: video.description, tags: video.tags },
     format: video.format,
   });
+
+  // Clean up the temp download to keep disk usage bounded across many uploads
+  // on the same container. Best-effort — failure here doesn't affect anything.
+  if (downloadedTemp) {
+    await unlink(localPath).catch(() => {});
+  }
 
   await prisma.video.update({
     where: { id: video.id },

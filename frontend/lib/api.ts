@@ -95,9 +95,10 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(patch),
     }),
-  // Full real pipeline: Claude → ElevenLabs/say → Pexels → FFmpeg → AI review.
-  // Does NOT upload; the user approves after seeing the verdict. Synchronous
-  // on the backend (long videos take minutes), so allow a long wait.
+  // Kick off a render. Returns 202 with { videoId } in <1s; the actual render
+  // runs in the background. Caller polls pollVideo(videoId) until status flips
+  // to 'ready' or 'failed'. Async to dodge the edge-proxy timeout that killed
+  // the previous synchronous design at ~35s on Render.
   generateVideo: (
     channelId: string,
     topic: string,
@@ -105,10 +106,26 @@ export const api = {
     upload = false,
     calendarEntryId: string | null = null,
   ) =>
-    req<VideoResult>('/generate/video', {
+    req<{ videoId: string; status: string; message?: string }>('/generate/video', {
       method: 'POST',
       body: JSON.stringify({ channelId, topic, format, upload, calendarEntryId }),
     }),
+  // Poll a render's current state. Returns the full VideoResult shape once
+  // status='ready'; partial fields (status only) while still 'generating'.
+  pollVideo: (videoId: string) =>
+    req<VideoResult & { status: string }>(`/generate/video/${videoId}`),
+  // Reattach to an in-flight render after a page reload. Returns null when
+  // nothing is running; the channel page polls this on mount.
+  activeRender: async (channelId: string) => {
+    const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api';
+    const token = getToken();
+    const res = await fetch(`${BASE}/generate/channel/${channelId}/active`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (res.status === 204) return null;
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return (await res.json()) as { videoId: string; format: VideoFormat; startedAt: string };
+  },
   // Human gate: approve a reviewed video and publish it to YouTube.
   approveUpload: (videoId: string) =>
     req<{ youtube: { youtubeVideoId: string; url: string }; uploadNote: string }>(

@@ -31,6 +31,10 @@ The Dockerfile installs both. Plan accordingly (see Caveats).
    | `PIXABAY_API_KEY` | (music synth is procedural; key currently unused) |
    | `YOUTUBE_API_KEY` | optional — trend search |
    | `SCHEDULER_SECRET` | **auto-generated** by `render.yaml` (`generateValue`). Protects `POST /api/scheduler/run`. Nothing to set — read it from the dashboard only if you want to drive the scheduler from an external cron. |
+   | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_BUCKET_NAME` | Object storage for rendered MP4s. **Strongly recommended in prod** (see "Ephemeral media" caveat below). Cloudflare R2 works — set `AWS_ENDPOINT_URL=https://<acct>.r2.cloudflarestorage.com` and `AWS_REGION=auto`. |
+   | `PUBLIC_BACKEND_URL` | Optional. Used to build webhook callback URLs. On Render the `RENDER_EXTERNAL_URL` env var is set automatically and serves the same purpose. |
+   | `WEBHOOK_SECRET` | Optional. Without it, video providers fall back to polling — set it (and only then) to let Kling / Veo / etc. notify on completion instantly. `openssl rand -hex 32`. |
+   | `REDIS_URL` | Optional today (one Render instance → in-memory render lock is fine). **Required** the moment you scale to more than one backend instance. |
 
    `MOCK_MODE=false`, `NODE_ENV=production`, `CLAUDE_MODEL` are already in
    `render.yaml`. Do **not** put secrets in the file — dashboard only.
@@ -76,18 +80,29 @@ The Dockerfile installs both. Plan accordingly (see Caveats).
   plan (512 MB, 0.1 CPU, sleeps when idle) will be slow and can OOM on
   long-form renders. `render.yaml` defaults to **`starter`** (paid) as the
   realistic minimum. Change `plan:` if you accept free-tier limits.
-- **Ephemeral media (chosen).** Rendered MP4s live on the container disk and
-  are wiped on every redeploy/restart. That's accepted: the canonical copy is
-  the YouTube upload. Local `/media/<id>.mp4` is a preview only.
-- **Long renders vs request timeout.** `/api/generate/video` is synchronous
-  and can take minutes (long-form especially). Render web services allow long
-  requests, but a cold-started free instance plus a 4–10 min render may still
-  hit client/proxy timeouts. Shorts are safe; long-form is best-effort until
-  the BullMQ worker path is wired.
+- **Media persistence.** With `AWS_BUCKET_NAME` set, rendered MP4s persist
+  to S3/R2 and the YouTube upload streams from there — surviving any
+  restart between render and publish. **Strongly recommended:** the
+  scheduler's 2-hour advance render window means a restart in that gap
+  silently loses the file without a bucket. Without it the pipeline still
+  works for immediate-publish flows but auto-publish becomes best-effort.
+- **Long renders vs request timeout.** `/api/generate/video` returns 202 in
+  <1s and renders in the background; the frontend polls `/generate/video/:id`
+  for completion. Long-form renders (up to 24 scenes through Kling/Veo) can
+  take 15+ minutes; the poll window is sized for that. The scheduler renders
+  serially on a single instance to stay inside Render Starter's 512 MB cap.
 - **Voice.** ElevenLabs (if quota) → **edge-tts (free neural, default)** →
   `say` (Linux has no `say`, so edge-tts is effectively required; the
   Dockerfile installs it).
 - **Music** is synthesized procedurally (copyright-safe). Pixabay has no
   music API; `PIXABAY_API_KEY` is currently unused.
-- **Secrets** are never committed (`.gitignore` covers `.env*`). Set them in
-  the Render/Vercel dashboards only.
+- **Secrets** are never committed (`.gitignore` covers `.env*`). Set them
+  in the Render/Vercel dashboards only — **not** in any `.env` file on
+  your laptop. If you've ever pasted a production key into a local
+  `.env`, rotate it (Anthropic / Google / Kling / etc. all expose a
+  rotate button). Use a separate Supabase project + separate test API
+  keys for local dev.
+- **Health.** `GET /api/health` reports per-subsystem state (database,
+  storage bucket, Redis, scheduler tick freshness, API-key presence).
+  Point Render's healthcheck and any external uptime monitor at this —
+  it 503s when the DB is unreachable.

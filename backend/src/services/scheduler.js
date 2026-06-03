@@ -15,6 +15,7 @@
 
 import { prisma } from '../lib/prisma.js';
 import { renderVideo, publishVideoToYouTube, publicBaseUrl } from './videoPipeline.js';
+import { acquire as acquireRenderLock, release as releaseRenderLock } from '../lib/renderLock.js';
 
 const TICK_MS = 60_000;
 // Due rows pulled per cycle. Renders are sequential (see drain()) so a large
@@ -23,6 +24,18 @@ const TICK_MS = 60_000;
 const BATCH = 3;
 let timer = null;
 let busy = false; // process-local mutex — true while a cycle is running
+let _lastTickAt = null; // wall-clock of the last cycle end — read by /api/health
+
+export function schedulerStatus() {
+  return {
+    running: timer !== null,
+    busy,
+    lastTickAt: _lastTickAt ? _lastTickAt.toISOString() : null,
+    secondsSinceLastTick: _lastTickAt
+      ? Math.round((Date.now() - _lastTickAt.getTime()) / 1000)
+      : null,
+  };
+}
 
 async function claim(entryId, fromStatus, toStatus) {
   const r = await prisma.calendarEntry.updateMany({
@@ -51,6 +64,17 @@ async function processAutoRender(entry) {
     include: { googleAccount: true },
   });
   if (!channel) return fail(entry.id, 'channel missing');
+
+  // Shared with the /generate/video route — prevents a user-kicked render
+  // from racing a scheduler-kicked render on the same channel.
+  const lockHeld = await acquireRenderLock(channel.id);
+  if (!lockHeld) {
+    // Roll the entry back to planned so the next tick can retry.
+    await prisma.calendarEntry
+      .update({ where: { id: entry.id }, data: { status: 'planned' } })
+      .catch(() => {});
+    return;
+  }
 
   try {
     const rendered = await renderVideo({
@@ -82,6 +106,8 @@ async function processAutoRender(entry) {
     }
   } catch (e) {
     await fail(entry.id, e);
+  } finally {
+    await releaseRenderLock(channel.id);
   }
 }
 
@@ -105,9 +131,13 @@ async function drain() {
   const ADVANCE_WINDOW_MS = 2 * 60 * 60 * 1000; // 2 hours
   const generateHorizon = new Date(now.getTime() + ADVANCE_WINDOW_MS);
   
+  // Only pre-render rows that will auto-publish at scheduledFor. Manual rows
+  // must wait for the user — pre-rendering them silently burns Anthropic /
+  // image / video tokens for a video the user may never approve.
   const toGenerate = await prisma.calendarEntry.findMany({
     where: {
       status: 'planned',
+      autoMode: 'auto',
       scheduledFor: { gt: now, lte: generateHorizon },
     },
     orderBy: { scheduledFor: 'asc' },
@@ -177,6 +207,7 @@ export async function runSchedulerCycle({ trigger = 'interval' } = {}) {
     return { skipped: false, error: String(e?.message ?? e) };
   } finally {
     busy = false;
+    _lastTickAt = new Date();
   }
 }
 
@@ -189,6 +220,22 @@ async function recover() {
   await prisma.calendarEntry
     .updateMany({ where: { status: 'publishing' }, data: { status: 'ready' } })
     .catch(() => {});
+
+  // Video rows whose render was killed by a process restart never got the
+  // catch-block in renderVideo() that would mark them failed. Mark anything
+  // older than 15 min as failed so the UI doesn't show phantom 'generating'
+  // rows forever. 15 min is well past the longest realistic render (~3 min).
+  const cutoff = new Date(Date.now() - 15 * 60 * 1000);
+  const r = await prisma.video
+    .updateMany({
+      where: { status: 'generating', createdAt: { lt: cutoff } },
+      data: { status: 'failed' },
+    })
+    .catch(() => null);
+  if (r && r.count > 0) {
+    // eslint-disable-next-line no-console
+    console.log(`[recover] marked ${r.count} stale 'generating' video(s) as failed`);
+  }
 }
 
 export async function startScheduler() {

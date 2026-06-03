@@ -1,33 +1,56 @@
 import crypto from 'node:crypto';
 import { MOCK_MODE } from '../env.js';
 
-/**
- * Helper to poll a background job for video generation.
- * In production, webhooks are preferred to prevent keeping active Node threads
- * blocked for 1-5 minutes during heavy AI rendering. 
- * 
- * WEBHOOK STRATEGY:
- * To use webhooks instead of polling:
- * 1. Pass a `webhook_url` parameter (e.g. "https://your-backend.com/api/webhooks/video-done")
- *    in the API call payload when initiating generation.
- * 2. Set up an Express route: `router.post('/webhooks/video-done', async (req, res) => { ... })`
- *    which receives the finished video URL and updates the database calendar entry status to 'ready'.
- * 3. This avoids CPU/event-loop bloat and handles server restarts cleanly.
- */
+// Webhook fast-path. Providers (Kling, Veo, etc) call /api/webhooks/video-done
+// when a job finishes; the route stuffs the result here, keyed by provider
+// job id. pollJob checks this map before its HTTP poll, so a webhook
+// shortcuts the 5–8s poll cadence to ~0ms.
+//
+// If a webhook is missed (network, restart between submit and webhook fire),
+// pollJob's HTTP poll still drives the job to completion. So this is purely
+// an optimization, never a correctness dependency.
+const webhookResults = new Map(); // jobId → { resultUrl?, error? }
+
+export function recordWebhookResult(jobId, payload) {
+  webhookResults.set(jobId, payload);
+}
+
+// The public URL providers should POST completion notifications to. Returns
+// null when PUBLIC_BACKEND_URL or WEBHOOK_SECRET is unset — providers then
+// just don't get a callback URL and we fall back to pure polling.
+export function callbackUrl() {
+  const base =
+    process.env.PUBLIC_BACKEND_URL?.replace(/\/$/, '') ??
+    process.env.RENDER_EXTERNAL_URL?.replace(/\/$/, '');
+  if (!base || !process.env.WEBHOOK_SECRET) return null;
+  return `${base}/api/webhooks/video-done`;
+}
+
 async function pollJob(jobId, checkStatusFn, intervalMs = 6000, maxRetries = 50) {
   for (let i = 0; i < maxRetries; i++) {
+    // Fast-path: a webhook may have already delivered the result.
+    const cached = webhookResults.get(jobId);
+    if (cached) {
+      webhookResults.delete(jobId);
+      if (cached.error) throw new Error(`AI Video Generation failed: ${cached.error}`);
+      if (cached.resultUrl) {
+        console.log(`[VideoProvider] Job ${jobId} completed via webhook.`);
+        return cached.resultUrl;
+      }
+      // Webhook with neither — fall through and let the HTTP poll decide.
+    }
+
     console.log(`[VideoProvider] Polling status for job ${jobId} (attempt ${i + 1}/${maxRetries})...`);
     const { status, resultUrl, error } = await checkStatusFn(jobId);
-    
+
     if (status === 'completed') {
-      console.log(`[VideoProvider] Job ${jobId} completed successfully! URL: ${resultUrl}`);
+      console.log(`[VideoProvider] Job ${jobId} completed via poll! URL: ${resultUrl}`);
       return resultUrl;
     }
     if (status === 'failed') {
       throw new Error(`AI Video Generation failed: ${error || 'Unknown error'}`);
     }
-    
-    // Wait for the next poll interval
+
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
   throw new Error(`AI Video Generation timed out for job ${jobId}`);
@@ -212,19 +235,25 @@ function klingImage(imageUrl) {
  */
 async function animateKling(imageUrl, prompt) {
   const submitUrl = 'https://api.klingai.com/v1/videos/image2video';
+  const cb = callbackUrl();
+  const body = {
+    model_name: 'kling-v1',
+    image: klingImage(imageUrl),
+    prompt: `${prompt} | vertical orientation, high detail, 30fps`,
+    duration: '5',
+    aspect_ratio: '9:16',
+    // Kling will POST to this URL when the job finishes (Kling docs:
+    // "callback_url"). Polling stays as a safety net; whichever signal
+    // arrives first wins.
+    ...(cb ? { callback_url: cb } : {}),
+  };
   const response = await fetch(submitUrl, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${klingJwt()}`,
       'Content-Type': 'application/json'
     },
-    body: JSON.stringify({
-      model_name: 'kling-v1',
-      image: klingImage(imageUrl),
-      prompt: `${prompt} | vertical orientation, high detail, 30fps`,
-      duration: '5',
-      aspect_ratio: '9:16'
-    })
+    body: JSON.stringify(body)
   });
 
   if (!response.ok) {

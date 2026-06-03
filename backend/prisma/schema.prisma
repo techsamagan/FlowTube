@@ -114,6 +114,9 @@ model Video {
   scriptMeta   Json? // sections, viralScore, hook analysis
   voiceoverUrl String?
   videoUrl     String?
+  // Object-storage key (e.g. "videos/<id>.mp4") when the MP4 is persisted
+  // to S3/R2. Null = the MP4 is only on the local ephemeral disk.
+  storageKey   String?
   thumbnailUrl String?
 
   title       String?

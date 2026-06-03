@@ -20,6 +20,9 @@ const STATEMENTS = [
   // 500s, so this migration is load-bearing.
   `ALTER TABLE "CalendarEntry" ADD COLUMN IF NOT EXISTS "autoMode" TEXT NOT NULL DEFAULT 'manual'`,
   `ALTER TABLE "CalendarEntry" ADD COLUMN IF NOT EXISTS "lastError" TEXT`,
+  // Persistent media storage: rendered MP4s upload to S3/R2 when AWS_BUCKET_NAME
+  // is set. This column holds the object key. Null = local-disk-only (legacy).
+  `ALTER TABLE "Video" ADD COLUMN IF NOT EXISTS "storageKey" TEXT`,
 ];
 
 export async function ensureSchema() {

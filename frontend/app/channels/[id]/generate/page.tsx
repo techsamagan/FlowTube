@@ -72,31 +72,74 @@ function ChannelGenerate() {
   const imageProvider = channel.imageProvider ?? 'GEMINI';
   const videoProvider = channel.videoProvider ?? 'KLING';
 
+  // Long-form renders chain through Claude → image gen → video animation
+  // (up to 24 scenes × ~5 min poll each on Veo/Kling) — 5 min was a
+  // false-failure trap. 30 min matches the longest realistic backend path.
+  const pollCapMs = (f: VideoFormat) =>
+    f === 'long' ? 30 * 60 * 1000 : 5 * 60 * 1000;
+
+  async function pollUntilDone(videoId: string, fmt: VideoFormat) {
+    const tick = fmt === 'long' ? 22000 : 8000;
+    if (timer.current) clearInterval(timer.current);
+    timer.current = setInterval(() => {
+      setStep((s) => (s < STEPS.length - 1 ? s + 1 : s));
+    }, tick);
+
+    const startedAt = Date.now();
+    const MAX_MS = pollCapMs(fmt);
+    while (Date.now() - startedAt < MAX_MS) {
+      await new Promise((r) => setTimeout(r, 3000));
+      const snap = await api.pollVideo(videoId);
+      if (snap.status === 'ready') {
+        if (timer.current) clearInterval(timer.current);
+        setResult(snap as VideoResult);
+        setStep(STEPS.length);
+        return;
+      }
+      if (snap.status === 'failed') {
+        throw new Error('Render failed. Check the channel’s recent videos for details.');
+      }
+    }
+    const cap = Math.round(MAX_MS / 60000);
+    throw new Error(`Render did not complete within ${cap} minutes.`);
+  }
+
   async function run() {
     setErr(null);
     setResult(null);
     setUploadState({ status: 'idle' });
     setStep(0);
 
-    // Advance the visual stepper on a timed estimate.
-    // Image generation + animation can each take 20-90 s per clip.
-    const tick = format === 'long' ? 22000 : 8000;
-    if (timer.current) clearInterval(timer.current);
-    timer.current = setInterval(() => {
-      setStep((s) => (s < STEPS.length - 1 ? s + 1 : s));
-    }, tick);
-
     try {
-      const r = await api.generateVideo(channel.id, topic, format, false, entryId);
-      if (timer.current) clearInterval(timer.current);
-      setResult(r);
-      setStep(STEPS.length);
+      const { videoId } = await api.generateVideo(channel.id, topic, format, false, entryId);
+      await pollUntilDone(videoId, format);
     } catch (e) {
       if (timer.current) clearInterval(timer.current);
       setErr((e as Error).message);
       setStep(-1);
     }
   }
+
+  // On mount, reattach to any in-flight render for this channel — survives
+  // page reloads, alt-tabs, and switching browsers without orphaning the
+  // backend job (which keeps running regardless).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const active = await api.activeRender(channel.id);
+        if (cancelled || !active) return;
+        setStep(0);
+        setFormat(active.format);
+        await pollUntilDone(active.videoId, active.format);
+      } catch (e) {
+        if (!cancelled) setErr((e as Error).message);
+      }
+    })();
+    return () => { cancelled = true; };
+    // Channel id is stable per page mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [channel.id]);
 
   async function approveAndUpload() {
     if (!result) return;

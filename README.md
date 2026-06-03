@@ -43,7 +43,7 @@ risk; that's a product decision for you, not a technical blocker.
 | Frontend | Next.js 14 (App Router), Tailwind, Framer Motion |
 | Backend  | Node + Express (REST) |
 | DB       | PostgreSQL via Prisma |
-| Queue    | BullMQ + Redis (scaffolded; no-op without `REDIS_URL`) |
+| Locking  | Redis (`SET NX EX`) when `REDIS_URL` is set; in-memory fallback otherwise |
 | AI       | Claude (`claude-sonnet-4-20250514`) |
 | Media    | ElevenLabs (TTS), Pexels (b-roll), FFmpeg (assembly) — *adapters stubbed* |
 
@@ -139,7 +139,7 @@ loud warning and uses the mock corpus (never silently fake in real mode).
 | Mock Google auth + session | Real NextAuth.js + OAuth UI |
 | Channel detect / upsert | YouTube Analytics fetch |
 | AI channel identity flow | Viral analysis engine (the "brain") |
-| Viral script + SEO metadata | BullMQ 7-step video pipeline |
+| Viral script + SEO metadata | (Pipeline now runs inline with per-channel single-flight + scheduler) |
 | Full Prisma schema (8+ models) | Scheduler, calendar, analytics screens |
 
 The real adapters (`services/youtube.js`, `services/claude.js`) already
