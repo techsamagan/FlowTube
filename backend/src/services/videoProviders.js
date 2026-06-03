@@ -47,9 +47,9 @@ export async function animateImage(imageUrl, prompt, provider = 'KLING') {
   const isMock = MOCK_MODE || shouldFallbackToMock(p);
 
   if (isMock) {
-    console.log(`[VideoProvider] MOCK_MODE active for ${p}. Returning high-quality mock MP4.`);
-    // A lightweight public sample vertical-friendly video for development
-    return 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4';
+    console.log(`[VideoProvider] MOCK_MODE active for ${p}. Will generate a local placeholder clip.`);
+    // Return a sentinel — the pipeline generates the clip via FFmpeg (no external URL).
+    return 'mock:generate';
   }
 
   try {
@@ -65,8 +65,8 @@ export async function animateImage(imageUrl, prompt, provider = 'KLING') {
     }
   } catch (err) {
     console.error(`[VideoProvider] Real provider ${p} failed:`, err.message);
-    console.log(`[VideoProvider] Falling back to mock MP4.`);
-    return 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4';
+    console.log(`[VideoProvider] Falling back to local mock clip.`);
+    return 'mock:generate';
   }
 }
 

@@ -16,7 +16,7 @@ import { generateScript, generateMetadata, reviewVideo, formatSpec } from './cla
 import { synthesizeVoiceover } from './elevenlabs.js';
 import { searchBroll, downloadTo } from './pexels.js';
 import { fetchMusic } from './music.js';
-import { assembleVideo } from './ffmpeg.js';
+import { assembleVideo, generateMockClip } from './ffmpeg.js';
 import { uploadShort } from './youtube.js';
 import { generateBaseImage } from './imageProviders.js';
 import { animateImage } from './videoProviders.js';
@@ -135,7 +135,16 @@ export async function renderVideo({ channel, topic, format = 'short', baseUrl, c
       console.log(`[videoPipeline] Generating scene visual ${i + 1}/${clipCount} for cue: "${targetCues[i]}"`);
       const videoUrl = await generateSceneVisual(targetCues[i], channel);
       const brollPath = path.join(workDir, `broll${i}.mp4`);
-      await downloadTo(videoUrl, brollPath);
+
+      if (videoUrl === 'mock:generate') {
+        // No real video provider available — generate a placeholder clip locally
+        // with FFmpeg (lavfi color source). This avoids any external URL download.
+        console.log(`[videoPipeline] Generating local mock clip for scene ${i + 1}`);
+        await generateMockClip(brollPath, 5);
+      } else {
+        await downloadTo(videoUrl, brollPath);
+      }
+
       brollPaths.push(brollPath);
     }
 

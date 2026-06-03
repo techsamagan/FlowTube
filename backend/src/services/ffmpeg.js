@@ -294,3 +294,23 @@ export async function assembleVideo({
     hasMusic: Boolean(musicPath),
   };
 }
+
+/**
+ * Generate a placeholder video clip using FFmpeg's built-in lavfi source.
+ * Used in mock/no-key mode so we never hit external URLs that may 403.
+ * Produces a solid dark gradient 1080x1920 vertical clip.
+ */
+export async function generateMockClip(outPath, durationSec = 5) {
+  await run('ffmpeg', [
+    '-y',
+    '-f', 'lavfi',
+    '-i', `color=c=0x12121f:size=1080x1920:rate=30`,
+    '-t', String(durationSec),
+    '-c:v', 'libx264',
+    '-preset', 'ultrafast',
+    '-pix_fmt', 'yuv420p',
+    outPath,
+  ]);
+  return outPath;
+}
+
