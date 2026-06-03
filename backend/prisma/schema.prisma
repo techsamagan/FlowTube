@@ -75,7 +75,7 @@ model YoutubeChannel {
   isCustomNiche   Boolean @default(false)
   videosPerDay    Int     @default(1)
   imageProvider   String  @default("GEMINI")
-  videoProvider   String  @default("KLING")
+  videoProvider   String  @default("VEO")
   voiceProvider   String  @default("ELEVEN")
   language        String  @default("English")
   // What this channel is about. Drives on-brand script generation AND

@@ -54,6 +54,8 @@ export async function animateImage(imageUrl, prompt, provider = 'KLING') {
 
   try {
     switch (p) {
+      case 'VEO':
+        return await animateVeo(imageUrl, prompt);
       case 'KLING':
         return await animateKling(imageUrl, prompt);
       case 'LUMA':
@@ -72,6 +74,9 @@ export async function animateImage(imageUrl, prompt, provider = 'KLING') {
 
 function shouldFallbackToMock(provider) {
   switch (provider) {
+    case 'VEO':
+      // Veo uses the same Vertex AI key/project pair as Imagen.
+      return !process.env.GEMINI_API_KEY || !(process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT);
     case 'KLING':
       return !process.env.KLING_API_KEY;
     case 'LUMA':
@@ -81,6 +86,86 @@ function shouldFallbackToMock(provider) {
     default:
       return true;
   }
+}
+
+/**
+ * Google Veo (Vertex AI) Image-to-Video Wrapper.
+ *
+ * Uses the same AQ. Vertex Express key + Google Cloud project as the
+ * Imagen path. The image arrives as either a data: URL (returned by our
+ * Imagen step) or an https URL; Veo wants raw bytes, so we normalise to
+ * base64 before submitting.
+ */
+async function animateVeo(imageUrl, prompt) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  const projectId = process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT;
+  const location = 'us-central1';
+  const model = process.env.VEO_MODEL || 'veo-2.0-generate-001';
+
+  const { bytesB64, mimeType } = await imageToBase64(imageUrl);
+
+  const submitUrl = `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:predictLongRunning?key=${apiKey}`;
+  const submit = await fetch(submitUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      instances: [{
+        prompt: `${prompt} | vertical 9:16, cinematic motion, smooth camera`,
+        image: { bytesBase64Encoded: bytesB64, mimeType },
+      }],
+      parameters: {
+        aspectRatio: '9:16',
+        durationSeconds: 5,
+        sampleCount: 1,
+        personGeneration: 'allow_adult',
+      },
+    }),
+  });
+
+  if (!submit.ok) {
+    const errBody = await submit.text();
+    throw new Error(`Veo submit error: ${submit.status} - ${errBody}`);
+  }
+
+  const submitJson = await submit.json();
+  const operationName = submitJson.name;
+  if (!operationName) throw new Error('Veo did not return an operation name');
+
+  const fetchUrl = `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:fetchPredictOperation?key=${apiKey}`;
+
+  return await pollJob(operationName, async (name) => {
+    const res = await fetch(fetchUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ operationName: name }),
+    });
+    if (!res.ok) throw new Error(`Veo poll error: ${res.status}`);
+    const data = await res.json();
+    if (data.error) return { status: 'failed', error: data.error.message };
+    if (!data.done) return { status: 'processing' };
+    const video = data.response?.videos?.[0] ?? data.response?.generatedSamples?.[0]?.video;
+    const url = video?.gcsUri || video?.uri;
+    const inlineBytes = video?.bytesBase64Encoded;
+    if (url) return { status: 'completed', resultUrl: url };
+    if (inlineBytes) {
+      return { status: 'completed', resultUrl: `data:video/mp4;base64,${inlineBytes}` };
+    }
+    return { status: 'failed', error: 'Veo response missing video payload' };
+  }, 8000, 60);
+}
+
+// Normalise an image source (data: URL or https URL) to { bytesB64, mimeType }.
+async function imageToBase64(imageUrl) {
+  if (imageUrl.startsWith('data:')) {
+    const match = imageUrl.match(/^data:([^;]+);base64,(.+)$/);
+    if (!match) throw new Error('Malformed data URL for Veo input');
+    return { mimeType: match[1], bytesB64: match[2] };
+  }
+  const res = await fetch(imageUrl);
+  if (!res.ok) throw new Error(`Failed to fetch image for Veo: ${res.status}`);
+  const mimeType = res.headers.get('content-type') || 'image/jpeg';
+  const buf = Buffer.from(await res.arrayBuffer());
+  return { mimeType, bytesB64: buf.toString('base64') };
 }
 
 /**

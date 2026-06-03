@@ -6,6 +6,12 @@ import { detectChannels, generateChannelIdentity } from '../services/youtube.js'
 const router = Router();
 router.use(requireUser);
 
+// Provider whitelists. Must stay in sync with services/imageProviders.js and
+// services/videoProviders.js switch statements and with the frontend settings
+// dropdown (app/channels/[id]/settings/page.tsx).
+const IMAGE_PROVIDERS = ['GEMINI', 'DALLE3', 'FLUX', 'HIGGSFIELD'];
+const VIDEO_PROVIDERS = ['VEO', 'KLING', 'LUMA', 'HIGGSFIELD', 'NONE'];
+
 // List all channels across the user's connected Google accounts.
 router.get('/', async (req, res, next) => {
   try {
@@ -145,8 +151,20 @@ router.patch('/:id', async (req, res, next) => {
     if (typeof req.body?.niche === 'string') data.niche = req.body.niche;
     if (typeof req.body?.isCustomNiche === 'boolean') data.isCustomNiche = req.body.isCustomNiche;
     if (typeof req.body?.language === 'string') data.language = req.body.language;
-    if (typeof req.body?.imageProvider === 'string') data.imageProvider = req.body.imageProvider.toUpperCase();
-    if (typeof req.body?.videoProvider === 'string') data.videoProvider = req.body.videoProvider.toUpperCase();
+    if (typeof req.body?.imageProvider === 'string') {
+      const v = req.body.imageProvider.toUpperCase();
+      if (!IMAGE_PROVIDERS.includes(v)) {
+        return res.status(400).json({ error: `Unknown imageProvider: ${v}` });
+      }
+      data.imageProvider = v;
+    }
+    if (typeof req.body?.videoProvider === 'string') {
+      const v = req.body.videoProvider.toUpperCase();
+      if (!VIDEO_PROVIDERS.includes(v)) {
+        return res.status(400).json({ error: `Unknown videoProvider: ${v}` });
+      }
+      data.videoProvider = v;
+    }
     if (typeof req.body?.videosPerDay === 'number') data.videosPerDay = Math.max(1, Math.min(10, req.body.videosPerDay));
 
     const channel = await prisma.youtubeChannel.update({
@@ -180,7 +198,7 @@ function serialize(c) {
     viralScore: c.viralDNA?.avgRetentionViral ?? null,
     videoCountLocal: c._count?.videos ?? 0,
     imageProvider: c.imageProvider ?? 'GEMINI',
-    videoProvider: c.videoProvider ?? 'KLING',
+    videoProvider: c.videoProvider ?? 'VEO',
     videosPerDay: c.videosPerDay ?? 1,
   };
 }

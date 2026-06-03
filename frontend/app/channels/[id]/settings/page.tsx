@@ -4,32 +4,61 @@ import { useState } from 'react';
 import { api, NICHES, LANGUAGES } from '@/lib/api';
 import { useChannel } from '../channel-context';
 
+// Must stay in sync with IMAGE_PROVIDERS / VIDEO_PROVIDERS in
+// backend/src/routes/channels.js and the switch statements in
+// services/imageProviders.js + services/videoProviders.js.
+const IMAGE_PROVIDERS: { value: string; label: string; hint: string }[] = [
+  { value: 'GEMINI', label: 'Gemini Imagen (Google) — default', hint: 'Uses GEMINI_API_KEY + Google Cloud project. Free tier available.' },
+  { value: 'DALLE3', label: 'DALL·E 3 / ChatGPT (OpenAI)', hint: 'Requires OPENAI_API_KEY. Higher cost, very strong quality.' },
+  { value: 'FLUX', label: 'Flux Schnell (fal.ai)', hint: 'Requires FAL_KEY. Fastest, cheapest.' },
+];
+
+const VIDEO_PROVIDERS: { value: string; label: string; hint: string }[] = [
+  { value: 'VEO', label: 'Veo (Google) — default', hint: 'Image-to-video on Vertex AI. Uses GEMINI_API_KEY + Google Cloud project. Requires Vertex AI Platform to be enabled.' },
+  { value: 'KLING', label: 'Kling AI', hint: 'Requires KLING_API_KEY. Best motion quality per dollar.' },
+  { value: 'LUMA', label: 'Luma Dream Machine', hint: 'Requires LUMA_API_KEY.' },
+  { value: 'NONE', label: 'No AI video (Pexels stock b-roll)', hint: 'Skips image-to-video, uses real Pexels footage matched per scene. Cheapest and most reliable.' },
+];
+
 export default function ChannelSettings() {
   const { channel, reload } = useChannel();
   const [niche, setNiche] = useState(channel.niche);
   const [language, setLanguage] = useState(channel.language);
   const [description, setDescription] = useState(channel.description ?? '');
+  const [imageProvider, setImageProvider] = useState(channel.imageProvider ?? 'GEMINI');
+  const [videoProvider, setVideoProvider] = useState(channel.videoProvider ?? 'VEO');
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   const dirty =
     niche !== channel.niche ||
     language !== channel.language ||
-    description !== (channel.description ?? '');
+    description !== (channel.description ?? '') ||
+    imageProvider !== (channel.imageProvider ?? 'GEMINI') ||
+    videoProvider !== (channel.videoProvider ?? 'VEO');
 
   async function save() {
     setSaving(true);
     setMsg(null);
     try {
-      await api.updateChannel(channel.id, { niche, language, description });
+      await api.updateChannel(channel.id, {
+        niche,
+        language,
+        description,
+        imageProvider,
+        videoProvider,
+      });
       reload();
-      setMsg({ ok: true, text: 'Saved. This now steers script generation and trend picks.' });
+      setMsg({ ok: true, text: 'Saved. New renders will use these providers.' });
     } catch (e) {
       setMsg({ ok: false, text: (e as Error).message });
     } finally {
       setSaving(false);
     }
   }
+
+  const imageHint = IMAGE_PROVIDERS.find((p) => p.value === imageProvider)?.hint ?? '';
+  const videoHint = VIDEO_PROVIDERS.find((p) => p.value === videoProvider)?.hint ?? '';
 
   const readOnly: [string, string][] = [
     ['Channel name', channel.name],
@@ -103,6 +132,40 @@ export default function ChannelSettings() {
             generator as the brand contract.
           </span>
         </label>
+
+        <div className="grid gap-5 sm:grid-cols-2">
+          <label className="block">
+            <span className="eyebrow mb-1 block">Image generator</span>
+            <select
+              value={imageProvider}
+              onChange={(e) => setImageProvider(e.target.value)}
+              className="field w-full"
+            >
+              {IMAGE_PROVIDERS.map((p) => (
+                <option key={p.value} value={p.value}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+            <span className="mt-1 block text-xs text-muted">{imageHint}</span>
+          </label>
+
+          <label className="block">
+            <span className="eyebrow mb-1 block">Video generator</span>
+            <select
+              value={videoProvider}
+              onChange={(e) => setVideoProvider(e.target.value)}
+              className="field w-full"
+            >
+              {VIDEO_PROVIDERS.map((p) => (
+                <option key={p.value} value={p.value}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+            <span className="mt-1 block text-xs text-muted">{videoHint}</span>
+          </label>
+        </div>
 
         <div className="flex items-center gap-3">
           <button
