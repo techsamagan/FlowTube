@@ -164,18 +164,39 @@ router.post('/ai-generate', async (req, res, next) => {
       const date = new Date(start);
       date.setDate(date.getDate() + d);
       if (!wantDay.has(date.getDay())) continue;
-      date.setHours(hourFor(date.getDay()), 0, 0, 0);
-      const pick = rec.whatToMake[ti % topics.length];
-      planned.push({
-        channelId: channel.id,
-        scheduledFor: new Date(date),
-        topic: pick.topic,
-        format: defaultFormat,
-        notes: pick.rationale?.slice(0, 500) ?? '',
-        source: 'ai',
-        autoMode,
-      });
-      ti++;
+
+      const vPerDay = channel.videosPerDay ?? 1;
+      const bestHour = hourFor(date.getDay());
+      const hours = [];
+
+      if (vPerDay <= 1) {
+        hours.push(bestHour);
+      } else if (vPerDay === 2) {
+        hours.push(11, 16); // 11:00 AM and 4:00 PM
+      } else {
+        const startHour = 9;
+        const endHour = 21;
+        const interval = (endHour - startHour) / (vPerDay - 1);
+        for (let i = 0; i < vPerDay; i++) {
+          hours.push(Math.round(startHour + i * interval));
+        }
+      }
+
+      for (const hr of hours) {
+        const scheduledTime = new Date(date);
+        scheduledTime.setHours(hr, 0, 0, 0);
+        const pick = rec.whatToMake[ti % topics.length];
+        planned.push({
+          channelId: channel.id,
+          scheduledFor: scheduledTime,
+          topic: pick.topic,
+          format: defaultFormat,
+          notes: pick.rationale?.slice(0, 500) ?? '',
+          source: 'ai',
+          autoMode,
+        });
+        ti++;
+      }
     }
 
     if (replace)

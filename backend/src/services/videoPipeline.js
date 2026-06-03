@@ -14,13 +14,38 @@ import { fileURLToPath } from 'node:url';
 import { prisma } from '../lib/prisma.js';
 import { generateScript, generateMetadata, reviewVideo, formatSpec } from './claude.js';
 import { synthesizeVoiceover } from './elevenlabs.js';
-import { brollKeywords, searchBroll, downloadTo } from './pexels.js';
+import { searchBroll, downloadTo } from './pexels.js';
 import { fetchMusic } from './music.js';
 import { assembleVideo } from './ffmpeg.js';
 import { uploadShort } from './youtube.js';
+import { generateBaseImage } from './imageProviders.js';
+import { animateImage } from './videoProviders.js';
 
 const STORAGE = path.join(fileURLToPath(new URL('../../storage', import.meta.url)));
 export const MEDIA_DIR = path.join(STORAGE, 'media');
+
+/**
+ * Generate a visual video clip for a single scene prompt by combining
+ * Image generation and Video animation (Provider Factory pattern).
+ */
+export async function generateSceneVisual(prompt, channel) {
+  // Step 1: Generate Base Image
+  const imageProvider = channel.imageProvider || 'FLUX';
+  const imageUrl = await generateBaseImage(prompt, imageProvider);
+
+  // Step 2: Animate the image, or fallback to Pexels search if videoProvider is 'NONE'
+  const videoProvider = channel.videoProvider || 'KLING';
+  if (videoProvider === 'NONE') {
+    console.log(`[videoPipeline] videoProvider is NONE. Falling back to Pexels stock B-roll search for keyword.`);
+    // Get up to 3 words from prompt as keywords
+    const keywords = prompt.replace(/[^a-zA-Z0-9\s]/g, '').split(/\s+/).filter(w => w.length > 3).slice(0, 3).join(' ') || channel.niche;
+    const links = await searchBroll(keywords, 1);
+    return links[0];
+  }
+
+  // Animate image using the video provider
+  return await animateImage(imageUrl, prompt, videoProvider);
+}
 
 // True if this channel's account can actually publish to YouTube. Mock/seed
 // accounts are rejected so we never try to upload with placeholder tokens.
@@ -43,6 +68,7 @@ export async function renderVideo({ channel, topic, format = 'short', baseUrl, c
 
   const script = await generateScript({
     niche: channel.niche,
+    isCustomNiche: channel.isCustomNiche,
     topic,
     viralDNA: channel.viralDNA ?? undefined,
     description: channel.description || undefined,
@@ -85,15 +111,29 @@ export async function renderVideo({ channel, topic, format = 'short', baseUrl, c
     const voicePath = path.join(workDir, 'voice.mp3');
     const vo = await synthesizeVoiceover({ script, seed: channel.id, outPath: voicePath });
 
-    // 2. B-roll — scale clip count with target length so long videos don't
-    //    loop the same 3 clips for minutes (~1 clip / 12s, clamped).
+    // 2. B-roll — generate visual clips for each scene
     const est = script.estimatedDurationSec || spec.minSec;
     const clipCount = Math.max(3, Math.min(24, Math.ceil(est / 12)));
-    const kw = brollKeywords(script, channel.niche).join(' ');
-    const links = await searchBroll(kw, clipCount);
+    
+    // Get visual prompts from the script
+    const visualCues = script.visualCues || [];
+    if (visualCues.length === 0) {
+      visualCues.push(...script.sections.map((s) => s.text));
+    }
+    
+    // Scale or pad cues to match clipCount
+    const targetCues = [];
+    for (let i = 0; i < clipCount; i++) {
+      targetCues.push(visualCues[i % visualCues.length] || `${channel.niche} cinematic view`);
+    }
+
     const brollPaths = [];
-    for (let i = 0; i < links.length; i++) {
-      brollPaths.push(await downloadTo(links[i], path.join(workDir, `broll${i}.mp4`)));
+    for (let i = 0; i < targetCues.length; i++) {
+      console.log(`[videoPipeline] Generating scene visual ${i + 1}/${clipCount} for cue: "${targetCues[i]}"`);
+      const videoUrl = await generateSceneVisual(targetCues[i], channel);
+      const brollPath = path.join(workDir, `broll${i}.mp4`);
+      await downloadTo(videoUrl, brollPath);
+      brollPaths.push(brollPath);
     }
 
     // 3. Royalty-free music bed (Content-ID safe; null → renders no music).
@@ -143,7 +183,7 @@ export async function renderVideo({ channel, topic, format = 'short', baseUrl, c
       durationSec: built.durationSec,
       format: fmt,
       voiceId: vo.voiceId,
-      keywords: kw,
+      keywords: targetCues.join(', '),
       music: music ? { title: music.title, source: music.source } : null,
       captioned: built.captioned,
       review,

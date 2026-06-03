@@ -32,6 +32,7 @@ router.post('/script', async (req, res, next) => {
 
     const script = await generateScript({
       niche,
+      isCustomNiche: channel?.isCustomNiche ?? false,
       topic,
       viralDNA: channel?.viralDNA ?? undefined,
       description: channel?.description || undefined,
@@ -147,7 +148,7 @@ router.post('/video/:id/schedule', async (req, res, next) => {
 
     const updated = await prisma.calendarEntry.update({
       where: { id: entry.id },
-      data: { videoId: video.id, status: 'ready', lastError: null },
+      data: { videoId: video.id, status: 'ready', autoMode: 'auto', lastError: null },
     });
     res.json({ entry: updated });
   } catch (e) {

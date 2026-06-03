@@ -26,7 +26,7 @@ HARD RULES:
 - Curiosity gap: state the result, withhold the "how" until later.
 - Only high-arousal emotions: surprise, shock, awe, curiosity, urgency.
 - Last sentence MUST loop back into the first sentence seamlessly.
-- Insert [VISUAL CUE: ...] markers for the video editor.
+- Insert [VISUAL CUE: ...] markers for each scene. Each visual cue MUST be a highly detailed, cinematic visual prompt optimized for Image-to-Video generation models. Specify the camera angle/shot type (e.g., extreme close-up, panning drone shot), detailed volumetric lighting (e.g., moody golden hour, cyberpunk neon glow), and precise motion/actions (e.g., smoke swirling, debris slowly floating, character slowly turning head).
 - Insert [TEXT POPUP: ...] markers for on-screen captions.
 - Use the niche's vocabulary and avoid its forbidden patterns.
 - Score the script's viral potential 1–10 before returning.
@@ -66,7 +66,8 @@ HARD RULES:
 - Every chapter must earn the next click; no filler, no throat-clearing.
 - Open loops early, pay them off late. Pattern-interrupt every 30-45s.
 - Concrete > abstract: stories, numbers, named examples.
-- Insert [VISUAL CUE: ...] and [TEXT POPUP: ...] markers throughout.
+- Insert [VISUAL CUE: ...] markers throughout. Each visual cue MUST be a highly detailed, cinematic visual prompt optimized for Image-to-Video generation models. Specify the camera angle/shot type (e.g., extreme close-up, panning drone shot), detailed volumetric lighting (e.g., moody golden hour, cyberpunk neon glow), and precise motion/actions (e.g., smoke swirling, debris slowly floating, character slowly turning head).
+- Insert [TEXT POPUP: ...] markers for on-screen captions.
 - Use the niche's vocabulary; avoid its forbidden patterns.
 - Score the script's retention potential 1-10 before returning.
 
@@ -101,30 +102,30 @@ export function formatSpec(format) {
  * Generate a viral Shorts script.
  * @param {{ niche:string, topic?:string, viralDNA?:object, description?:string, language?:string }} input
  */
-export async function generateScript({ niche, topic, viralDNA, description, language, format = 'short' }) {
-  const persona = getNiche(niche);
+export async function generateScript({ niche, isCustomNiche = false, topic, viralDNA, description, language, format = 'short' }) {
+  const persona = getNiche(isCustomNiche ? 'custom' : niche);
   const spec = formatSpec(format);
 
   if (MOCK_MODE || !env.ANTHROPIC_API_KEY) {
-    return mockScript({ niche, topic, persona, format });
+    return mockScript({ niche, topic, persona, format, isCustomNiche });
   }
 
   const userPrompt = [
-    `Niche: ${persona.label}`,
+    `Niche: ${isCustomNiche ? niche : persona.label}`,
+    isCustomNiche
+      ? `This is a custom niche. You must dynamically infer the tone, pacing, and visual style based on the custom niche string: "${niche}".`
+      : `Hook styles that work: ${persona.hookStyles.join('; ')}\nTone guide: ${persona.toneGuide}\nAvoid: ${persona.avoidList.join('; ')}`,
     `Target length: ${spec.label} — ${spec.minSec}-${spec.maxSec} seconds of spoken audio.`,
     description
       ? `THIS CHANNEL IS ABOUT: ${description}\nThe script MUST stay on-brand for this exact channel description — topic, angle, examples and vocabulary all derived from it.`
       : '',
     language && language.toLowerCase() !== 'english' ? `Write the script in ${language}.` : '',
-    `Hook styles that work: ${persona.hookStyles.join('; ')}`,
-    `Tone guide: ${persona.toneGuide}`,
-    `Avoid: ${persona.avoidList.join('; ')}`,
     topic
       ? `Topic to cover: ${topic}`
       : description
         ? 'Choose a topic that fits THIS CHANNEL\'S description above and is high-performing for the niche.'
         : `Pick a high-performing topic from: ${persona.topicIdeas.join(', ')}`,
-    viralDNA ? `This channel's learned viral DNA (bias toward it): ${JSON.stringify(viralDNA)}` : '',
+    viralDNA ? `This channel's learned viral DNA (bias toward it): ${JSON.stringify(viralDNA)}. Apply these proven viral patterns to the script.` : '',
     'Generate one script now. JSON only.',
   ]
     .filter(Boolean)
@@ -151,22 +152,22 @@ function parseScriptJson(text) {
 // ---------------------------------------------------------------------------
 // Mock generator — produces a realistic, blueprint-shaped script with no key.
 // ---------------------------------------------------------------------------
-function mockScript({ niche, topic, persona, format = 'short' }) {
-  const subject = topic || persona.topicIdeas[0] || 'the thing nobody tells you';
+function mockScript({ niche, topic, persona, format = 'short', isCustomNiche = false }) {
+  const subject = topic || (isCustomNiche ? niche : persona.topicIdeas[0]) || 'the thing nobody tells you';
   const hook = `Nobody believes me until they see what ${subject} actually does.`;
 
   if (format === 'long') {
-    const chapter = (n, body) => ({
+    const chapter = (n, body, cue) => ({
       label: `CHAPTER ${n}`,
       timecode: `[ch${n}]`,
-      text: `${body} [VISUAL CUE: chapter ${n} b-roll] [TEXT POPUP: Part ${n}]`,
+      text: `${body} [VISUAL CUE: ${cue}] [TEXT POPUP: Part ${n}]`,
     });
     const sec = [
       { label: 'COLD OPEN HOOK', timecode: '[0-15s]', text: `${hook} By the end of this you'll see exactly why — and the last part changes everything. [TEXT POPUP: Watch to the end]` },
       { label: 'STAKES', timecode: '[15-40s]', text: `Most people get ${subject} completely backwards, and it quietly costs them every single day. Here's what almost nobody explains.` },
-      chapter(1, `First, the foundation: the one mechanism behind ${subject} that everything else depends on. Skip it and nothing else works.`),
-      chapter(2, `Now the part people resist: a small, repeatable move that compounds. It feels too simple to matter — that's exactly why it works.`),
-      chapter(3, `Then the multiplier: stack the last two and the curve bends. Slowly, then all at once.`),
+      chapter(1, `First, the foundation: the one mechanism behind ${subject} that everything else depends on. Skip it and nothing else works.`, `extreme close-up of a vintage stopwatch ticking under dramatic golden hour light, dust motes slowly floating`),
+      chapter(2, `Now the part people resist: a small, repeatable move that compounds. It feels too simple to matter — that's exactly why it works.`, `cinematic drone shot sweeping over ancient stone ruins in Greece, soft sunset glow, epic slow motion`),
+      chapter(3, `Then the multiplier: stack the last two and the curve bends. Slowly, then all at once.`, `cyberpunk neon alleyway, heavy rain, reflection on wet pavement, slow camera dolly in`),
       { label: 'CLIMAX', timecode: '[climax]', text: `And here's the reveal that recontextualizes all of it: it was working the entire time — you just couldn't measure it yet. [TEXT POPUP: 🤯]` },
       { label: 'OUTRO', timecode: '[outro]', text: `Which closes the loop we opened: nobody believes me until they see what ${subject} actually does. Now you can.` },
     ];
@@ -175,7 +176,11 @@ function mockScript({ niche, topic, persona, format = 'short' }) {
       title: `The Truth About ${subject} Nobody Explains (Full Breakdown)`,
       sections: sec,
       fullScript,
-      visualCues: ['chapter 1 b-roll', 'chapter 2 b-roll', 'chapter 3 b-roll'],
+      visualCues: [
+        'extreme close-up of a vintage stopwatch ticking under dramatic golden hour light, dust motes slowly floating',
+        'cinematic drone shot sweeping over ancient stone ruins in Greece, soft sunset glow, epic slow motion',
+        'cyberpunk neon alleyway, heavy rain, reflection on wet pavement, slow camera dolly in'
+      ],
       textPopups: ['Watch to the end', 'Part 1', '🤯'],
       estimatedDurationSec: 330,
       viralScore: 8,
@@ -186,9 +191,9 @@ function mockScript({ niche, topic, persona, format = 'short' }) {
 
   const sections = [
     { label: 'HOOK', timecode: '[0-3s]', text: `${hook} [TEXT POPUP: Wait for it]` },
-    { label: 'RE-HOOK #1', timecode: '[3-8s]', text: `And it's not what you think. [VISUAL CUE: hard cut, zoom on subject]` },
+    { label: 'RE-HOOK #1', timecode: '[3-8s]', text: `And it's not what you think. [VISUAL CUE: extreme close-up of a vintage stopwatch ticking under dramatic golden hour light, dust motes slowly floating]` },
     { label: 'VALUE CHUNK #1', timecode: '[8-20s]', text: `Here's the first move: most people skip this and wonder why nothing changes. The ones who don't, quietly win.` },
-    { label: 'RE-HOOK #2', timecode: '[20-25s]', text: `But that's the easy part. [VISUAL CUE: pace change, faster cuts] The real shift is next.` },
+    { label: 'RE-HOOK #2', timecode: '[20-25s]', text: `But that's the easy part. [VISUAL CUE: cyberpunk neon alleyway, heavy rain, reflection on wet pavement, slow camera dolly in] The real shift is next.` },
     { label: 'VALUE CHUNK #2', timecode: '[25-40s]', text: `When you stack it with one small habit, the curve bends. Slowly, then all at once.` },
     { label: 'CLIMAX', timecode: '[40-50s]', text: `And here's the part that breaks people's brains: it was working the whole time — they just couldn't see it yet. [TEXT POPUP: 🤯]` },
     { label: 'SEAMLESS LOOP', timecode: '[50-58s]', text: `Which is exactly why nobody believes me until they see what ${subject} actually does.` },
@@ -198,7 +203,10 @@ function mockScript({ niche, topic, persona, format = 'short' }) {
     title: `The ${subject} trick people refuse to believe`,
     sections,
     fullScript,
-    visualCues: ['hard cut, zoom on subject', 'pace change, faster cuts'],
+    visualCues: [
+      'extreme close-up of a vintage stopwatch ticking under dramatic golden hour light, dust motes slowly floating',
+      'cyberpunk neon alleyway, heavy rain, reflection on wet pavement, slow camera dolly in'
+    ],
     textPopups: ['Wait for it', '🤯'],
     estimatedDurationSec: 54,
     viralScore: 8,

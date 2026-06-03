@@ -57,19 +57,26 @@ async function processAutoRender(entry) {
       baseUrl: publicBaseUrl(),
       calendarEntryId: entry.id,
     });
-    // Render done — link, then immediately try to publish (auto mode).
-    await prisma.calendarEntry.update({
-      where: { id: entry.id },
-      data: { videoId: rendered.videoId, status: 'publishing' },
-    });
-    if (!rendered.canUpload) {
-      return fail(
-        entry.id,
-        'Rendered but channel is not connected to a real Google account; cannot auto-publish.',
-      );
+    // Render done — link, then check if we should publish immediately or set to ready.
+    const now = new Date();
+    if (entry.autoMode === 'auto' && entry.scheduledFor <= now) {
+      await prisma.calendarEntry.update({
+        where: { id: entry.id },
+        data: { videoId: rendered.videoId, status: 'publishing' },
+      });
+      if (!rendered.canUpload) {
+        return fail(
+          entry.id,
+          'Rendered but channel is not connected to a real Google account; cannot auto-publish.',
+        );
+      }
+      await publishVideoToYouTube({ videoId: rendered.videoId });
+    } else {
+      await prisma.calendarEntry.update({
+        where: { id: entry.id },
+        data: { videoId: rendered.videoId, status: 'ready' },
+      });
     }
-    await publishVideoToYouTube({ videoId: rendered.videoId });
-    // publishVideoToYouTube also marks the entry `published`.
   } catch (e) {
     await fail(entry.id, e);
   }
@@ -90,23 +97,54 @@ async function processReadyPublish(entry) {
 // published in one go; ready rows are upload-only.
 async function drain() {
   const now = new Date();
-  const due = await prisma.calendarEntry.findMany({
+
+  // 1. Advance rendering: find planned entries scheduled in the next 2 hours
+  const ADVANCE_WINDOW_MS = 2 * 60 * 60 * 1000; // 2 hours
+  const generateHorizon = new Date(now.getTime() + ADVANCE_WINDOW_MS);
+  
+  const toGenerate = await prisma.calendarEntry.findMany({
+    where: {
+      status: 'planned',
+      scheduledFor: { gt: now, lte: generateHorizon },
+    },
+    orderBy: { scheduledFor: 'asc' },
+    take: BATCH,
+  });
+
+  // Start background renders for entries in advance horizon
+  for (const entry of toGenerate) {
+    processAutoRender(entry).catch((e) => {
+      // eslint-disable-next-line no-console
+      console.error(`[scheduler] Background advance render failed for entry ${entry.id}:`, e);
+    });
+  }
+
+  // 2. Due for publishing now
+  const toPublish = await prisma.calendarEntry.findMany({
     where: {
       scheduledFor: { lte: now },
       OR: [
+        { status: 'ready', autoMode: 'auto' },
         { status: 'planned', autoMode: 'auto' },
-        { status: 'ready' }, // approved earlier, waiting for its slot
       ],
     },
     orderBy: { scheduledFor: 'asc' },
     take: BATCH,
   });
 
-  for (const entry of due) {
-    if (entry.status === 'planned') await processAutoRender(entry);
-    else await processReadyPublish(entry);
+  for (const entry of toPublish) {
+    if (entry.status === 'ready') {
+      await processReadyPublish(entry);
+    } else if (entry.status === 'planned') {
+      // Just in case it wasn't rendered in advance, render and publish in background
+      processAutoRender(entry).catch((e) => {
+        // eslint-disable-next-line no-console
+        console.error(`[scheduler] Background render-publish failed for entry ${entry.id}:`, e);
+      });
+    }
   }
-  return { processed: due.length };
+
+  return { processed: toGenerate.length + toPublish.length };
 }
 
 // Run one scheduler cycle behind the process-local mutex. Safe to call from

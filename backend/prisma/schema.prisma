@@ -72,6 +72,11 @@ model YoutubeChannel {
   name            String
   handle          String?
   niche           String
+  isCustomNiche   Boolean @default(false)
+  videosPerDay    Int     @default(1)
+  imageProvider   String  @default("FLUX")
+  videoProvider   String  @default("KLING")
+  voiceProvider   String  @default("ELEVEN")
   language        String  @default("English")
   // What this channel is about. Drives on-brand script generation AND
   // biases trend recommendations toward this channel's actual focus.
