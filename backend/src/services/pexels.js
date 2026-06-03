@@ -42,7 +42,11 @@ export async function searchBroll(query, count = 3) {
 }
 
 export async function downloadTo(url, path) {
-  const r = await fetch(url);
+  const r = await fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+    }
+  });
   if (!r.ok) throw new Error(`B-roll download ${r.status}`);
   await writeFile(path, Buffer.from(await r.arrayBuffer()));
   return path;
