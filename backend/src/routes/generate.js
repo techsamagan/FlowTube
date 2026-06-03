@@ -15,6 +15,12 @@ router.use(requireUser);
 // Re-export for the existing import in src/index.js (static /media serving).
 export { MEDIA_DIR };
 
+// Per-channel in-flight guard. Renders are CPU/memory-heavy; concurrent
+// renders for the same channel waste Anthropic tokens (generateScript fires
+// up-front) and OOM Render's 512 MB Starter plan. Cleared on completion OR
+// process restart — so a crashed render naturally unblocks on next boot.
+const inflightRenders = new Set();
+
 // Generate a viral script (spec §3). Optionally attach it to a channel as a
 // Video row in `generating` status — the entry point for the BullMQ pipeline.
 router.post('/script', async (req, res, next) => {
@@ -65,8 +71,19 @@ router.post('/script', async (req, res, next) => {
 // default; the user reviews the verdict and approves via /video/:id/upload
 // (immediate) or /video/:id/schedule (publish at calendar time).
 router.post('/video', async (req, res, next) => {
+  const { channelId, topic, calendarEntryId = null, upload = false } = req.body ?? {};
+
+  // Refuse a second render for the same channel while one is in flight. This
+  // is the brake on Anthropic-token waste when the render itself OOMs: the
+  // first call still spends generateScript tokens, but the user's retry-mash
+  // shortcircuits here BEFORE any Claude call fires.
+  if (channelId && inflightRenders.has(channelId)) {
+    return res.status(409).json({
+      error: 'A render is already in progress for this channel. Please wait for it to finish (or fail) before starting another.',
+    });
+  }
+
   try {
-    const { channelId, topic, calendarEntryId = null, upload = false } = req.body ?? {};
     const format = req.body?.format === 'long' ? 'long' : 'short';
     const channel = await prisma.youtubeChannel.findFirst({
       include: { googleAccount: true },
@@ -74,14 +91,20 @@ router.post('/video', async (req, res, next) => {
     });
     if (!channel) return res.status(404).json({ error: 'Channel not found' });
 
+    inflightRenders.add(channelId);
     const baseUrl = `${req.protocol}://${req.get('host')}`;
-    const result = await renderVideo({
-      channel,
-      topic,
-      format,
-      baseUrl,
-      calendarEntryId,
-    });
+    let result;
+    try {
+      result = await renderVideo({
+        channel,
+        topic,
+        format,
+        baseUrl,
+        calendarEntryId,
+      });
+    } finally {
+      inflightRenders.delete(channelId);
+    }
 
     let uploadNote = canUpload(channel)
       ? 'Rendered. Review the verdict, then approve to publish.'
