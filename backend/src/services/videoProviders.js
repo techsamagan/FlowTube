@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { MOCK_MODE } from '../env.js';
 
 /**
@@ -78,7 +79,13 @@ function shouldFallbackToMock(provider) {
       // Veo uses the same Vertex AI key/project pair as Imagen.
       return !process.env.GEMINI_API_KEY || !(process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT);
     case 'KLING':
-      return !process.env.KLING_API_KEY;
+      // Official Kling API needs BOTH access key + secret key (JWT signing).
+      // Fall back if either is missing — also accept the legacy single-token
+      // KLING_API_KEY so older deploys don't break.
+      return !(
+        (process.env.KLING_ACCESS_KEY && process.env.KLING_SECRET_KEY) ||
+        process.env.KLING_API_KEY
+      );
     case 'LUMA':
       return !process.env.LUMA_API_KEY;
     case 'HIGGSFIELD':
@@ -169,6 +176,38 @@ async function imageToBase64(imageUrl) {
 }
 
 /**
+ * Sign a Kling JWT. Kling's official API does NOT accept a static token —
+ * each request must carry a JWT signed (HS256) with the secret key, with
+ * the access key as `iss`. Tokens are short-lived (we use 30 min).
+ */
+function klingJwt() {
+  const accessKey = process.env.KLING_ACCESS_KEY;
+  const secretKey = process.env.KLING_SECRET_KEY;
+  if (!accessKey || !secretKey) {
+    // Legacy single-token mode: caller already verified it's set.
+    return process.env.KLING_API_KEY;
+  }
+  const header = { alg: 'HS256', typ: 'JWT' };
+  const now = Math.floor(Date.now() / 1000);
+  const payload = { iss: accessKey, exp: now + 1800, nbf: now - 5 };
+  const b64url = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  const data = `${b64url(header)}.${b64url(payload)}`;
+  const sig = crypto.createHmac('sha256', secretKey).update(data).digest('base64url');
+  return `${data}.${sig}`;
+}
+
+// Normalise the image input Kling accepts. data: URLs must be stripped to raw
+// base64 (no `data:image/...;base64,` prefix); https URLs pass through.
+function klingImage(imageUrl) {
+  if (imageUrl.startsWith('data:')) {
+    const m = imageUrl.match(/^data:[^;]+;base64,(.+)$/);
+    if (!m) throw new Error('Malformed data URL for Kling image');
+    return m[1];
+  }
+  return imageUrl;
+}
+
+/**
  * Kling AI Image-to-Video API Wrapper
  */
 async function animateKling(imageUrl, prompt) {
@@ -176,14 +215,15 @@ async function animateKling(imageUrl, prompt) {
   const response = await fetch(submitUrl, {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${process.env.KLING_API_KEY}`,
+      'Authorization': `Bearer ${klingJwt()}`,
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({
-      model: 'kling-v1',
-      image: imageUrl,
+      model_name: 'kling-v1',
+      image: klingImage(imageUrl),
       prompt: `${prompt} | vertical orientation, high detail, 30fps`,
-      duration: 5 // seconds
+      duration: '5',
+      aspect_ratio: '9:16'
     })
   });
 
@@ -200,7 +240,7 @@ async function animateKling(imageUrl, prompt) {
   return await pollJob(taskId, async (id) => {
     const statusUrl = `https://api.klingai.com/v1/videos/image2video/${id}`;
     const res = await fetch(statusUrl, {
-      headers: { 'Authorization': `Bearer ${process.env.KLING_API_KEY}` }
+      headers: { 'Authorization': `Bearer ${klingJwt()}` }
     });
     if (!res.ok) throw new Error(`Kling status fetch failed: ${res.status}`);
     
