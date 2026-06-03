@@ -30,7 +30,7 @@ export const MEDIA_DIR = path.join(STORAGE, 'media');
  */
 export async function generateSceneVisual(prompt, channel) {
   // Step 1: Generate Base Image
-  const imageProvider = channel.imageProvider || 'FLUX';
+  const imageProvider = channel.imageProvider || 'GEMINI';
   const imageUrl = await generateBaseImage(prompt, imageProvider);
 
   // Step 2: Animate the image, or fallback to Pexels search if videoProvider is 'NONE'

@@ -74,7 +74,7 @@ model YoutubeChannel {
   niche           String
   isCustomNiche   Boolean @default(false)
   videosPerDay    Int     @default(1)
-  imageProvider   String  @default("FLUX")
+  imageProvider   String  @default("GEMINI")
   videoProvider   String  @default("KLING")
   voiceProvider   String  @default("ELEVEN")
   language        String  @default("English")

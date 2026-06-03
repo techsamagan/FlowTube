@@ -6,7 +6,7 @@ import { MOCK_MODE } from '../env.js';
  * @param {string} provider - Image provider name (FLUX, GEMINI, DALLE3, HIGGSFIELD).
  * @returns {Promise<string>} - Resolves to the public URL of the generated image.
  */
-export async function generateBaseImage(prompt, provider = 'FLUX') {
+export async function generateBaseImage(prompt, provider = 'GEMINI') {
   const p = String(provider).toUpperCase();
   console.log(`[ImageProvider] Generating base image using provider: ${p} for prompt: "${prompt.slice(0, 60)}..."`);
 
