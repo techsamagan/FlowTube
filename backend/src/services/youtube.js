@@ -1,4 +1,4 @@
-import { createReadStream } from 'node:fs';
+import { createReadStream, existsSync } from 'node:fs';
 import { google } from 'googleapis';
 import { MOCK_MODE, env } from '../env.js';
 import { getNiche } from '../data/niches.js';
@@ -26,6 +26,10 @@ export async function uploadShort({ accessToken, refreshToken, videoPath, metada
     throw new Error(`YouTube token refresh failed: ${e.message}`);
   }
   const yt = google.youtube({ version: 'v3', auth });
+
+  if (!existsSync(videoPath)) {
+    throw new Error(`Video file not found at path: ${videoPath}. The ephemeral container storage may have been reset.`);
+  }
 
   // #Shorts in title/description is what flags a vertical <60s video as a
   // Short. Long-form videos must NOT carry it (and aren't /shorts/ URLs).
