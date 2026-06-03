@@ -143,7 +143,11 @@ router.patch('/:id', async (req, res, next) => {
     if (typeof req.body?.description === 'string')
       data.description = req.body.description.slice(0, 600);
     if (typeof req.body?.niche === 'string') data.niche = req.body.niche;
+    if (typeof req.body?.isCustomNiche === 'boolean') data.isCustomNiche = req.body.isCustomNiche;
     if (typeof req.body?.language === 'string') data.language = req.body.language;
+    if (typeof req.body?.imageProvider === 'string') data.imageProvider = req.body.imageProvider.toUpperCase();
+    if (typeof req.body?.videoProvider === 'string') data.videoProvider = req.body.videoProvider.toUpperCase();
+    if (typeof req.body?.videosPerDay === 'number') data.videosPerDay = Math.max(1, Math.min(10, req.body.videosPerDay));
 
     const channel = await prisma.youtubeChannel.update({
       where: { id: owned.id },
@@ -162,6 +166,7 @@ function serialize(c) {
     name: c.name,
     handle: c.handle,
     niche: c.niche,
+    isCustomNiche: c.isCustomNiche ?? false,
     language: c.language ?? 'English',
     description: c.description ?? '',
     subscriberCount: c.subscriberCount,
@@ -174,6 +179,9 @@ function serialize(c) {
     aiIdentity: c.aiIdentity ?? null,
     viralScore: c.viralDNA?.avgRetentionViral ?? null,
     videoCountLocal: c._count?.videos ?? 0,
+    imageProvider: c.imageProvider ?? 'GEMINI',
+    videoProvider: c.videoProvider ?? 'KLING',
+    videosPerDay: c.videosPerDay ?? 1,
   };
 }
 

@@ -81,7 +81,15 @@ export const api = {
   // Edit channel brief — description steers script generation + trend picks.
   updateChannel: (
     id: string,
-    patch: { description?: string; niche?: string; language?: string },
+    patch: {
+      description?: string;
+      niche?: string;
+      isCustomNiche?: boolean;
+      language?: string;
+      imageProvider?: string;
+      videoProvider?: string;
+      videosPerDay?: number;
+    },
   ) =>
     req<{ channel: Channel }>(`/channels/${id}`, {
       method: 'PATCH',
@@ -199,6 +207,7 @@ export type Channel = {
   name: string;
   handle: string | null;
   niche: string;
+  isCustomNiche: boolean;
   language: string;
   description: string;
   subscriberCount: number;
@@ -207,6 +216,9 @@ export type Channel = {
   isAiProposed: boolean;
   setupCompleted: boolean;
   aiIdentity: Identity | null;
+  imageProvider: string;
+  videoProvider: string;
+  videosPerDay: number;
 };
 export type Identity = {
   name: string;

@@ -12,14 +12,36 @@ import {
 } from '@/lib/api';
 import { useChannel } from '../channel-context';
 
+// Pipeline steps now reflect the AI Image-to-Video architecture.
+// Step timing is an estimate — the backend call is synchronous and can take
+// several minutes for long-form content (Claude → ElevenLabs → Imagen → FFmpeg).
 const STEPS = [
   'Script generation (Claude)',
-  'Voiceover (ElevenLabs / say)',
-  'B-roll fetch (Pexels)',
+  'Voiceover synthesis (ElevenLabs)',
+  'AI image generation',
+  'AI video animation',
   'Video assembly (FFmpeg)',
-  'SEO metadata',
   'AI quality review',
 ];
+
+const PROVIDER_LABELS: Record<string, string> = {
+  GEMINI: 'Gemini Imagen',
+  FLUX: 'Flux Schnell',
+  DALLE3: 'DALL·E 3',
+  HIGGSFIELD: 'Higgsfield',
+  KLING: 'Kling AI',
+  LUMA: 'Luma Dream',
+  NONE: 'Stock B-roll',
+};
+
+function ProviderBadge({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full border border-border bg-surface-2 px-2.5 py-0.5 text-[11px] font-medium text-muted">
+      <span className="text-accent/70">{label}</span>
+      <span className="text-ink">{PROVIDER_LABELS[value] ?? value}</span>
+    </span>
+  );
+}
 
 export default function ChannelGeneratePage() {
   return (
@@ -40,7 +62,6 @@ function ChannelGenerate() {
   const [step, setStep] = useState(-1);
   const [result, setResult] = useState<VideoResult | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  // 'idle' | 'uploading' | 'scheduling' | 'done' | 'scheduled' | 'error'
   const [uploadState, setUploadState] = useState<
     { status: 'idle' | 'uploading' | 'scheduling' | 'done' | 'scheduled' | 'error'; note?: string; url?: string }
   >({ status: 'idle' });
@@ -48,15 +69,18 @@ function ChannelGenerate() {
 
   useEffect(() => () => { if (timer.current) clearInterval(timer.current); }, []);
 
+  const imageProvider = channel.imageProvider ?? 'GEMINI';
+  const videoProvider = channel.videoProvider ?? 'KLING';
+
   async function run() {
     setErr(null);
     setResult(null);
     setUploadState({ status: 'idle' });
     setStep(0);
-    // Single synchronous backend call; long videos take minutes. Advance the
-    // visual stepper on a timed estimate but only the awaited response can
-    // mark the run complete.
-    const tick = format === 'long' ? 18000 : 6000;
+
+    // Advance the visual stepper on a timed estimate.
+    // Image generation + animation can each take 20-90 s per clip.
+    const tick = format === 'long' ? 22000 : 8000;
     if (timer.current) clearInterval(timer.current);
     timer.current = setInterval(() => {
       setStep((s) => (s < STEPS.length - 1 ? s + 1 : s));
@@ -85,8 +109,6 @@ function ChannelGenerate() {
     }
   }
 
-  // "Approve, but publish at the calendar time" — binds this video to the
-  // entry; scheduler uploads when due.
   async function approveAndSchedule() {
     if (!result || !entryId) return;
     setUploadState({ status: 'scheduling' });
@@ -110,12 +132,18 @@ function ChannelGenerate() {
     <>
       <header className="mb-8">
         <h1 className="text-2xl font-semibold">Generate a video</h1>
-        <p className="mt-1 text-sm text-muted">
-          {channel.name} · {nicheLabel(channel.niche)} · {channel.language}
-        </p>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <span className="text-sm text-muted">
+            {channel.name} · {nicheLabel(channel.niche)} · {channel.language}
+          </span>
+          <span className="text-muted">·</span>
+          <ProviderBadge label="Image" value={imageProvider} />
+          <ProviderBadge label="Video" value={videoProvider} />
+        </div>
       </header>
 
       <div className="grid gap-5 lg:grid-cols-[360px_1fr]">
+        {/* ── Left panel: controls + stepper ── */}
         <div className="glass h-fit space-y-4 p-5">
           <div>
             <span className="eyebrow mb-1.5 block">Format</span>
@@ -155,10 +183,12 @@ function ChannelGenerate() {
           <button onClick={run} disabled={running} className="btn-primary w-full">
             {running ? 'Generating…' : 'Generate'}
           </button>
+
           {running && (
             <p className="text-xs text-muted">
-              Real render — voiceover, stock footage, FFmpeg assembly, then an
-              AI quality check. Keep this tab open.
+              {imageProvider === 'GEMINI' ? 'Gemini Imagen' : imageProvider} is rendering
+              each scene, then {videoProvider === 'NONE' ? 'stock clips' : (PROVIDER_LABELS[videoProvider] ?? videoProvider)} animates
+              them into video. Keep this tab open.
             </p>
           )}
           {err && <p className="text-sm text-danger">{err}</p>}
@@ -168,7 +198,7 @@ function ChannelGenerate() {
             {STEPS.map((s, i) => (
               <div key={s} className="flex items-center gap-3 text-sm">
                 <span
-                  className={`nums grid h-6 w-6 place-items-center rounded-full text-[10px] transition-colors ${
+                  className={`nums grid h-6 w-6 shrink-0 place-items-center rounded-full text-[10px] transition-colors ${
                     step > i
                       ? 'bg-viral text-bg'
                       : step === i
@@ -184,6 +214,7 @@ function ChannelGenerate() {
           </div>
         </div>
 
+        {/* ── Right panel: result ── */}
         <div className="min-h-[420px]">
           <AnimatePresence mode="wait">
             {result && script ? (
@@ -193,7 +224,7 @@ function ChannelGenerate() {
                 animate={{ opacity: 1, y: 0 }}
                 className="space-y-4"
               >
-                {/* AI quality gate — prove it's good before publishing */}
+                {/* AI quality gate */}
                 {review && (
                   <div
                     className={`glass border p-5 ${
@@ -236,10 +267,15 @@ function ChannelGenerate() {
                       <p className="eyebrow mt-1">
                         {FORMAT_LABELS[result.format]} · {result.durationSec}s rendered
                         {result.captioned ? '' : ' · no burned captions'}
-                        {result.music ? ' · 🎵 royalty-free bed' : ' · no music'}
+                        {result.music ? ' · 🎵 music bed' : ' · no music'}
                       </p>
+                      <div className="mt-1.5 flex flex-wrap gap-1.5">
+                        <ProviderBadge label="Image" value={imageProvider} />
+                        <ProviderBadge label="Video" value={videoProvider} />
+                      </div>
                     </div>
                   </div>
+
                   {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
                   <video
                     src={result.videoUrl}
@@ -248,7 +284,7 @@ function ChannelGenerate() {
                     className="mx-auto aspect-[9/16] w-full max-w-[270px] rounded-lg border border-border bg-black"
                   />
 
-                  {/* Approve gate */}
+                  {/* Approve / publish gate */}
                   {uploadState.status === 'done' ? (
                     <div className="space-y-2">
                       <p className="text-sm text-viral">{uploadState.note}</p>
@@ -281,7 +317,7 @@ function ChannelGenerate() {
                             ? 'Approve & upload to YouTube'
                             : 'Upload anyway (override review)'}
                       </button>
-                      {/* Schedule path — only when we came from a calendar row */}
+
                       {entryId && (
                         <button
                           onClick={approveAndSchedule}
@@ -296,6 +332,7 @@ function ChannelGenerate() {
                             : 'Approve & publish at calendar time'}
                         </button>
                       )}
+
                       {uploadState.status === 'error' && (
                         <p className="text-sm text-danger">{uploadState.note}</p>
                       )}
@@ -310,6 +347,7 @@ function ChannelGenerate() {
                   )}
                 </div>
 
+                {/* Script sections */}
                 <div className="glass space-y-4 p-5">
                   {script.sections.map((s) => (
                     <div key={s.label} className="border-l border-border pl-4">
@@ -321,6 +359,7 @@ function ChannelGenerate() {
                   ))}
                 </div>
 
+                {/* SEO metadata */}
                 {meta && (
                   <div className="glass p-5 text-sm">
                     <p className="eyebrow mb-2">SEO metadata</p>
@@ -342,11 +381,19 @@ function ChannelGenerate() {
                 animate={{ opacity: 1 }}
                 className="glass grid min-h-[420px] place-items-center p-10 text-center"
               >
-                <p className="max-w-xs text-sm text-muted">
-                  {running
-                    ? 'Rendering — the player and AI review appear here when the pipeline finishes.'
-                    : 'Pick a format and topic, generate, then review the AI verdict before publishing.'}
-                </p>
+                <div className="max-w-xs space-y-3">
+                  <p className="text-sm text-muted">
+                    {running
+                      ? 'AI pipeline running — the player and quality review appear here when rendering finishes.'
+                      : 'Pick a format and topic, then generate. FlowTube uses AI to create images and animate them into video clips before assembling the final Short.'}
+                  </p>
+                  {!running && (
+                    <div className="flex flex-wrap justify-center gap-1.5 pt-1">
+                      <ProviderBadge label="Image" value={imageProvider} />
+                      <ProviderBadge label="Video" value={videoProvider} />
+                    </div>
+                  )}
+                </div>
               </motion.div>
             )}
           </AnimatePresence>

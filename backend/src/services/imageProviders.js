@@ -86,11 +86,21 @@ async function generateFluxFal(prompt) {
 }
 
 /**
- * Gemini Imagen 3 generation via Google Developer API
+ * Gemini Imagen 3 generation.
+ * Routes based on API key format:
+ *   - AQ. prefix → Vertex AI endpoint (Google Cloud API key)
+ *   - AIza prefix → generativelanguage.googleapis.com (AI Studio key)
  */
 async function generateGeminiImagen(prompt) {
-  // Call Google Gemini Imagen 3 generation endpoint
   const apiKey = process.env.GEMINI_API_KEY;
+  const projectId = process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT;
+
+  // Vertex AI Express / Google Cloud API key — starts with 'AQ.'
+  if (apiKey && apiKey.startsWith('AQ.') && projectId) {
+    return await generateVertexImagen(prompt, apiKey, projectId);
+  }
+
+  // Standard AI Studio key — generativelanguage.googleapis.com
   const url = `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:generateImages?key=${apiKey}`;
 
   const response = await fetch(url, {
@@ -116,7 +126,41 @@ async function generateGeminiImagen(prompt) {
   const base64Image = result.generatedImages?.[0]?.image?.imageBytes;
   if (!base64Image) throw new Error('Gemini did not return image bytes');
 
-  // Convert base64 to a data URL so that downloadTo function can fetch it
+  return `data:image/jpeg;base64,${base64Image}`;
+}
+
+/**
+ * Vertex AI Imagen 3 generation (for AQ. prefixed Google Cloud API keys).
+ */
+async function generateVertexImagen(prompt, apiKey, projectId) {
+  const location = 'us-central1';
+  const url = `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/imagegeneration@006:predict?key=${apiKey}`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      instances: [{
+        prompt: `${prompt} | vertical portrait orientation, 9:16 aspect ratio, ultra-high resolution, cinematic quality`
+      }],
+      parameters: {
+        sampleCount: 1,
+        aspectRatio: '9:16',
+        safetySetting: 'BLOCK_ONLY_HIGH',
+        personGeneration: 'ALLOW_ADULT'
+      }
+    })
+  });
+
+  if (!response.ok) {
+    const errBody = await response.text();
+    throw new Error(`Vertex AI Imagen API error: ${response.status} - ${errBody}`);
+  }
+
+  const result = await response.json();
+  const base64Image = result.predictions?.[0]?.bytesBase64Encoded;
+  if (!base64Image) throw new Error('Vertex AI Imagen did not return image bytes');
+
   return `data:image/jpeg;base64,${base64Image}`;
 }
 

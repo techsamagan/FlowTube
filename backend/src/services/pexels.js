@@ -42,12 +42,25 @@ export async function searchBroll(query, count = 3) {
 }
 
 export async function downloadTo(url, path) {
+  // Handle data: URLs (e.g. base64 images from Gemini Imagen)
+  if (typeof url === 'string' && url.startsWith('data:')) {
+    const commaIdx = url.indexOf(',');
+    if (commaIdx === -1) throw new Error('downloadTo: invalid data URL (no comma)');
+    const base64Data = url.slice(commaIdx + 1);
+    await writeFile(path, Buffer.from(base64Data, 'base64'));
+    return path;
+  }
+
   const r = await fetch(url, {
+    redirect: 'follow',
     headers: {
       'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-    }
+      'Accept': 'video/mp4,video/*,image/jpeg,image/*,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Referer': 'https://www.google.com/',
+    },
   });
-  if (!r.ok) throw new Error(`B-roll download ${r.status}`);
+  if (!r.ok) throw new Error(`Download failed (${r.status}) for: ${url.slice(0, 80)}`);
   await writeFile(path, Buffer.from(await r.arrayBuffer()));
   return path;
 }
