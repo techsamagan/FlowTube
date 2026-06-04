@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import os from 'node:os';
 
 // FFmpeg video assembly (spec pipeline Step 4): 1080x1920 vertical Short,
 // B-roll synced to the voiceover length, bold burned captions.
@@ -75,11 +76,22 @@ export async function buildSrt(sections, totalSec, srtPath) {
   return srtPath;
 }
 
-// LOW_MEMORY=true on Render Starter drops resolution to 720x1280 (saves ~55%
-// of FFmpeg's per-frame buffer memory) AND turns off the rich audio mix +
-// captions (libass and loudnorm are the OOM-killers on 512 MB). Default
-// 1080x1920 stays for dev / paid Render plans.
-const LOW_MEM = process.env.LOW_MEMORY === 'true';
+// LOW_MEMORY mode drops res to 720x1280, skips rich audio mix + libass
+// captions. Auto-enabled when container RAM is <1 GB (Render Starter is
+// 512 MB → auto-on). Override either way with LOW_MEMORY=true|false.
+const LOW_MEM = (() => {
+  if (process.env.LOW_MEMORY === 'true') return true;
+  if (process.env.LOW_MEMORY === 'false') return false;
+  // Auto: tighten when the host can't fit the full pipeline. 1 GB threshold
+  // gives a comfortable margin over Render Starter (512 MB) without
+  // accidentally tripping on a 2 GB+ machine.
+  const totalGB = os.totalmem() / (1024 * 1024 * 1024);
+  return totalGB < 1;
+})();
+if (LOW_MEM) {
+  // eslint-disable-next-line no-console
+  console.log(`[ffmpeg] LOW_MEMORY mode active (totalmem ${(os.totalmem() / 1024 / 1024).toFixed(0)} MB)`);
+}
 const VIDEO_W = LOW_MEM ? 720 : 1080;
 const VIDEO_H = LOW_MEM ? 1280 : 1920;
 
