@@ -239,7 +239,10 @@ async function animateKling(imageUrl, prompt) {
   const body = {
     model_name: 'kling-v1',
     image: klingImage(imageUrl),
-    prompt: `${prompt} | vertical orientation, high detail, 30fps`,
+    // Viral spec: slow cinematic push-in (0.25x), subtle parallax, no
+    // abrupt motion. Kling honors prose direction; 5 s duration per clip
+    // matches the per-scene timing the assembly pipeline expects.
+    prompt: `${prompt} | slow cinematic push-in, subtle parallax, very gentle motion, no abrupt camera movement, vertical 9:16, high detail`,
     duration: '5',
     aspect_ratio: '9:16',
     // Kling will POST to this URL when the job finishes (Kling docs:

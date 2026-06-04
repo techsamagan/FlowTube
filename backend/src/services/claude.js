@@ -5,43 +5,41 @@ import { getNiche } from '../data/niches.js';
 // ---------------------------------------------------------------------------
 // The viral blueprint. This is the contract the model must follow (spec §3).
 // ---------------------------------------------------------------------------
-const VIRAL_BLUEPRINT = `You are FlowTube's elite short-form scriptwriter. You write YouTube Shorts
-scripts engineered for maximum retention and loop rate.
+const VIRAL_BLUEPRINT = `You write 15-second viral TikTok/Reels-style YouTube Shorts. Ultra-short,
+max hook energy. Every word earns its place.
 
-SCRIPT STRUCTURE (timestamps are spoken-pace targets — this is a TIGHT
-10-30 second Short, every word counts):
-[0-2s]   HOOK — pattern interruption + curiosity gap. State the RESULT, not the
-         explanation. High-arousal emotion. NEVER start with "In this video" or "Today we".
-[2-6s]   RE-HOOK — new angle. Include a [VISUAL CUE] and a [TEXT POPUP].
-[6-16s]  VALUE — the single key payoff, fast, zero filler.
-[16-24s] CLIMAX — the most surprising / valuable moment.
-[24-30s] SEAMLESS LOOP — the final sentence must flow naturally back into the HOOK's
-         first sentence so the video loops invisibly.
+HOOK STYLE: open loop — start the story, do NOT finish it until the end.
+TARGET EMOTION: awe and wonder.
+
+STRUCTURE (15s total, hard cap):
+[0-2s]    HOOK — open loop. Make it impossible to scroll past. Plant a
+          question/promise/mystery you only resolve in REVEAL.
+[2-9s]    BUILD — deliver the awe + wonder payoff, fast. Concrete details,
+          zero filler, no setup phrases ("today I'll show you" is BANNED).
+[9-13s]   REVEAL — the satisfying moment. Close the loop opened in HOOK.
+[13-15s]  CTA — one short punchy line.
 
 HARD RULES:
-- Total spoken duration 12–28s at natural pace (HARD CAP 30s). This is a
-  fast Short, not a 60s video — cut anything that doesn't earn its place.
-- No pauses, no "um", no filler words.
-- Re-hook every 4–6 seconds minimum.
-- Curiosity gap: state the result, withhold the "how" until later.
-- Only high-arousal emotions: surprise, shock, awe, curiosity, urgency.
-- Last sentence MUST loop back into the first sentence seamlessly.
-- Insert [VISUAL CUE: ...] markers for each scene. Each visual cue MUST be a highly detailed, cinematic visual prompt optimized for Image-to-Video generation models. Specify the camera angle/shot type (e.g., extreme close-up, panning drone shot), detailed volumetric lighting (e.g., moody golden hour, cyberpunk neon glow), and precise motion/actions (e.g., smoke swirling, debris slowly floating, character slowly turning head).
-- Insert [TEXT POPUP: ...] markers for on-screen captions.
-- Use the niche's vocabulary and avoid its forbidden patterns.
-- Score the script's viral potential 1–10 before returning.
+- Max 60 words across the whole script.
+- Spoken duration 13-15s at natural pace, NEVER over 15s.
+- Only awe + wonder emotional tone (not shock/anger/fear).
+- Insert [SCENE N] markers (numbered 1..N) one per visual moment.
+- Insert [VISUAL CUE: ...] after each [SCENE N] — highly detailed,
+  cinematic, optimized for image-to-video: camera (extreme close-up /
+  drone shot / slow push-in), volumetric lighting, precise motion.
+- Insert [TEXT POPUP: ...] markers for on-screen captions on big lines.
 
 Return STRICT JSON only, no prose, matching this shape:
 {
   "title": string,
   "sections": [{ "label": string, "timecode": string, "text": string }],
-  "fullScript": string,            // all section text joined, markers inline
+  "fullScript": string,
   "visualCues": string[],
   "textPopups": string[],
   "estimatedDurationSec": number,
-  "viralScore": number,            // 1-10
+  "viralScore": number,
   "scoreRationale": string,
-  "loopExplanation": string        // how the last line returns to the first
+  "loopExplanation": string
 }`;
 
 // Long-form blueprint (4-10 min). Retention-engineered like the Shorts one
@@ -91,7 +89,10 @@ function anthropic() {
 }
 
 export const FORMATS = {
-  short: { label: 'Short', minSec: 10, maxSec: 30, blueprint: VIRAL_BLUEPRINT },
+  // Ultra-short viral target (13-15s). Tighter than YouTube Shorts' 60s
+  // upper bound — the new VIRAL_BLUEPRINT optimizes specifically for
+  // open-loop hook + awe/wonder payoff structure that fits in 15s.
+  short: { label: 'Short', minSec: 13, maxSec: 16, blueprint: VIRAL_BLUEPRINT },
   long: { label: 'Long', minSec: 240, maxSec: 600, blueprint: LONGFORM_BLUEPRINT },
 };
 export function formatSpec(format) {
@@ -265,12 +266,27 @@ export async function reviewVideo({ script, metadata, durationSec, format = 'sho
 
   const res = await anthropic().messages.create({
     model: env.CLAUDE_MODEL,
-    max_tokens: 700,
+    max_tokens: 900,
     system:
-      `You are FlowTube's ruthless QC reviewer. Decide if this ${spec.label} video is good enough to publish. ` +
-      `Judge hook strength, retention structure, on-brand fit, SEO, and whether the ${durationSec}s length fits the ${spec.minSec}-${spec.maxSec}s target. ` +
-      'Be honest — a weak hook or off-target length is a fail. Return STRICT JSON only: ' +
-      '{ "verdict": "pass" | "fail", "score": number (1-10), "reasons": string[], "summary": string }',
+      `You are FlowTube's ruthless QC reviewer. Score this ${spec.label} video on six 1-10 axes. ` +
+      `Reject (verdict="fail") if ANY axis scores below 7. ` +
+      `Rendered length: ${durationSec}s. Target: ${spec.minSec}-${spec.maxSec}s. ` +
+      'Return STRICT JSON only:\n' +
+      '{\n' +
+      '  "verdict": "pass" | "fail",\n' +
+      '  "score": number (1-10, average of the six axes),\n' +
+      '  "scores": {\n' +
+      '    "hookStrength": number (1-10),\n' +
+      '    "emotionClarity": number (1-10),\n' +
+      '    "pacing": number (1-10),\n' +
+      '    "sync": number (1-10),\n' +
+      '    "captions": number (1-10),\n' +
+      '    "payoff": number (1-10)\n' +
+      '  },\n' +
+      '  "viralPrediction": "low" | "medium" | "high" | "viral",\n' +
+      '  "reasons": string[],\n' +
+      '  "summary": string\n' +
+      '}',
     messages: [
       {
         role: 'user',
@@ -280,9 +296,17 @@ export async function reviewVideo({ script, metadata, durationSec, format = 'sho
   });
   const text = res.content.map((b) => (b.type === 'text' ? b.text : '')).join('');
   const parsed = parseScriptJson(text);
+  const scores = parsed.scores ?? {};
+  const numericScores = Object.values(scores).filter((v) => typeof v === 'number');
+  const minScore = numericScores.length ? Math.min(...numericScores) : Number(parsed.score ?? 0);
+  // Enforce the "any axis <7 → fail" rule server-side too, in case the model
+  // ignores it on a given run.
+  const verdict = minScore >= 7 && parsed.verdict === 'pass' ? 'pass' : 'fail';
   return {
-    verdict: parsed.verdict === 'pass' ? 'pass' : 'fail',
+    verdict,
     score: Number(parsed.score ?? 0),
+    scores,
+    viralPrediction: String(parsed.viralPrediction ?? 'unknown'),
     reasons: Array.isArray(parsed.reasons) ? parsed.reasons : [],
     summary: String(parsed.summary ?? ''),
   };

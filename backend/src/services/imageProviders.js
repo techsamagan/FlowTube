@@ -109,7 +109,7 @@ async function generateGeminiImagen(prompt) {
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({
-      prompt,
+      prompt: `${prompt} | ${CINEMATIC_SUFFIX}`,
       numberOfImages: 1,
       outputMimeType: 'image/jpeg',
       aspectRatio: '9:16',
@@ -132,6 +132,14 @@ async function generateGeminiImagen(prompt) {
 /**
  * Vertex AI Imagen 3 generation (for AQ. prefixed Google Cloud API keys).
  */
+// Cinematic style suffix per the viral spec — applied to all image-gen
+// prompts so the output matches the awe/wonder aesthetic the script writes
+// for. Midjourney-specific flags (--ar, --v) are ignored by Imagen/Gemini
+// but don't hurt; the prose tokens before them do the lifting.
+const CINEMATIC_SUFFIX =
+  'epic cinematic, god rays, vast scale, hyperrealistic, golden hour, ' +
+  '9:16 vertical, ultra-sharp, 8K, photorealistic, --ar 9:16 --v 6';
+
 async function generateVertexImagen(prompt, apiKey, projectId) {
   const location = 'us-central1';
   const url = `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/imagegeneration@006:predict?key=${apiKey}`;
@@ -141,7 +149,7 @@ async function generateVertexImagen(prompt, apiKey, projectId) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       instances: [{
-        prompt: `${prompt} | vertical portrait orientation, 9:16 aspect ratio, ultra-high resolution, cinematic quality`
+        prompt: `${prompt} | ${CINEMATIC_SUFFIX}`
       }],
       parameters: {
         sampleCount: 1,

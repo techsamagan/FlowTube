@@ -107,9 +107,11 @@ const NORM =
 // Format-aware audio strategy (the "viral sound guide"):
 //  short → punchy whoosh on every cut, music a touch louder.
 //  long  → subtle riser on cuts, music quiet under the voice.
+// Viral spec: music at 25% of voice. Previous 16% was too quiet to register
+// emotionally; 25% sits under the voice without competing with it.
 const AUDIO = {
-  short: { musicVol: 0.16, sfxVol: 0.5, sfx: 'whoosh' },
-  long: { musicVol: 0.09, sfxVol: 0.28, sfx: 'riser' },
+  short: { musicVol: 0.25, sfxVol: 0.5, sfx: 'whoosh' },
+  long: { musicVol: 0.12, sfxVol: 0.28, sfx: 'riser' },
 };
 
 // Synthesize a copyright-free transition SFX with FFmpeg's own generators
@@ -339,11 +341,14 @@ export async function assembleVideo({
   ];
   if (captioned) {
     await buildSrt(sections, Dc, path.join(workDir, 'captions.srt'));
+    // Viral spec: Arial Bold 52 px white with black stroke. Fontsize 52 is
+    // libass-relative — at our 1080x1920 canvas this lands roughly the
+    // same eye-size as Reels native captions.
     args.push(
       '-vf',
-      "subtitles=captions.srt:force_style='Fontname=Sans,Fontsize=15,Bold=1," +
+      "subtitles=captions.srt:force_style='Fontname=Arial,Fontsize=52,Bold=1," +
         "PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1," +
-        "Outline=3,Shadow=0,Alignment=2,MarginV=240'",
+        "Outline=4,Shadow=0,Alignment=2,MarginV=280'",
     );
   } else {
     // eslint-disable-next-line no-console
