@@ -21,12 +21,13 @@ function redis() {
   if (!process.env.REDIS_URL) return (_redis = false);
   try {
     _redis = new Redis(process.env.REDIS_URL, {
-      // Don't crash the app if Redis goes away — fall back to local Set.
+      // Cap retries so a long Redis outage fails fast (we fall back to the
+      // in-memory lock for individual calls). Default offline-queue is left
+      // ON so the very first call after process boot doesn't race the TCP
+      // handshake (commands queue briefly until ready=true).
       maxRetriesPerRequest: 1,
-      lazyConnect: false,
-      enableOfflineQueue: false,
     });
-    _redis.on('error', () => {});
+    _redis.on('error', () => {}); // swallow — callers handle individually
     return _redis;
   } catch {
     return (_redis = false);
@@ -35,35 +36,53 @@ function redis() {
 
 const local = new Map(); // channelId → timeout handle (for auto-expiry)
 
+function localAcquire(channelId) {
+  if (local.has(channelId)) return false;
+  const t = setTimeout(() => local.delete(channelId), TTL_SEC * 1000);
+  if (typeof t.unref === 'function') t.unref();
+  local.set(channelId, t);
+  return true;
+}
+function localRelease(channelId) {
+  const t = local.get(channelId);
+  if (t) clearTimeout(t);
+  local.delete(channelId);
+}
+
 function key(channelId) {
   return `flowtube:render-lock:${channelId}`;
 }
 
 // Try to claim the channel. Returns true if claimed, false if another render
-// already holds it. Auto-released after TTL_SEC regardless.
+// already holds it. Auto-released after TTL_SEC regardless. If Redis is
+// down/unreachable, falls back to the in-memory lock for this call — the
+// app keeps working, just without cross-instance coordination.
 export async function acquire(channelId) {
   if (!channelId) return true; // routes without a channelId don't need a lock
   const r = redis();
   if (r) {
-    const got = await r.set(key(channelId), '1', 'EX', TTL_SEC, 'NX');
-    return got === 'OK';
+    try {
+      const got = await r.set(key(channelId), '1', 'EX', TTL_SEC, 'NX');
+      return got === 'OK';
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn(`[renderLock] Redis acquire failed (${e.message}); using local lock for this call.`);
+      return localAcquire(channelId);
+    }
   }
-  if (local.has(channelId)) return false;
-  const t = setTimeout(() => local.delete(channelId), TTL_SEC * 1000);
-  // Don't hold the event loop open if this is the last pending work.
-  if (typeof t.unref === 'function') t.unref();
-  local.set(channelId, t);
-  return true;
+  return localAcquire(channelId);
 }
 
 export async function release(channelId) {
   if (!channelId) return;
   const r = redis();
   if (r) {
-    await r.del(key(channelId)).catch(() => {});
-    return;
+    try {
+      await r.del(key(channelId));
+      return;
+    } catch {
+      // Fall through to local release.
+    }
   }
-  const t = local.get(channelId);
-  if (t) clearTimeout(t);
-  local.delete(channelId);
+  localRelease(channelId);
 }
