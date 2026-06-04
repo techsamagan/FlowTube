@@ -72,11 +72,13 @@ function ChannelGenerate() {
   const imageProvider = channel.imageProvider ?? 'GEMINI';
   const videoProvider = channel.videoProvider ?? 'KLING';
 
-  // Long-form renders chain through Claude → image gen → video animation
-  // (up to 24 scenes × ~5 min poll each on Veo/Kling) — 5 min was a
-  // false-failure trap. 30 min matches the longest realistic backend path.
+  // With real video providers (Kling/Veo), each scene takes ~3-5 min and a
+  // Short uses 3+ scenes — so even the "fast" path realistically needs
+  // 15-20 min. The old 5-min cap was sized for mock-mode and false-failed
+  // every real render. Backend keeps running past these caps; the page
+  // reattach on mount lets the user pick up later.
   const pollCapMs = (f: VideoFormat) =>
-    f === 'long' ? 30 * 60 * 1000 : 5 * 60 * 1000;
+    f === 'long' ? 45 * 60 * 1000 : 20 * 60 * 1000;
 
   async function pollUntilDone(videoId: string, fmt: VideoFormat) {
     const tick = fmt === 'long' ? 22000 : 8000;
