@@ -193,6 +193,15 @@ export async function runSchedulerCycle({ trigger = 'interval' } = {}) {
   if (busy) return { skipped: true, reason: 'a scheduler cycle is already running' };
   busy = true;
   try {
+    // Run the stale-render sweep every cycle, not just at boot. Without this
+    // a render that gets stuck (provider hang, container OOM that didn't
+    // restart the process) sits in 'generating' forever and the channel's
+    // lock isn't naturally released by the IIFE. Cheap query — one row scan
+    // gated by the 15-min cutoff.
+    await recover().catch((e) =>
+      // eslint-disable-next-line no-console
+      console.error('[scheduler] recover sweep failed:', e?.message ?? e),
+    );
     const r = await drain();
     if (r.processed > 0) {
       // eslint-disable-next-line no-console

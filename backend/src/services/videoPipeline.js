@@ -31,22 +31,33 @@ import {
 const STORAGE = path.join(fileURLToPath(new URL('../../storage', import.meta.url)));
 export const MEDIA_DIR = path.join(STORAGE, 'media');
 
+// Wrap an async step with timing logs. Makes wall-clock visible in Render
+// logs so a future stuck render is diagnosable without redeploying just to
+// add debug prints. Returns the wrapped promise's value unchanged.
+async function stage(name, videoId, fn) {
+  const t0 = Date.now();
+  console.log(`[render ${videoId}] → ${name} start`);
+  try {
+    const r = await fn();
+    console.log(`[render ${videoId}] ✓ ${name} ${Math.round((Date.now() - t0) / 100) / 10}s`);
+    return r;
+  } catch (e) {
+    console.log(`[render ${videoId}] ✗ ${name} failed after ${Math.round((Date.now() - t0) / 100) / 10}s: ${e.message}`);
+    throw e;
+  }
+}
+
 /**
  * Generate a visual video clip for a single scene prompt by combining
  * Image generation and Video animation (Provider Factory pattern).
  */
 export async function generateSceneVisual(prompt, channel) {
-  // Step 1: Generate Base Image
-  const imageProvider = channel.imageProvider || 'GEMINI';
-  const imageUrl = await generateBaseImage(prompt, imageProvider);
-
-  // Step 2: Animate the image, or fallback to Pexels search if videoProvider is 'NONE'
   const videoProvider = channel.videoProvider || 'KLING';
+
+  // NONE = Pexels stock B-roll. The base image is unused on this path, so
+  // skip the image-gen call entirely (Gemini Imagen alone is 20-40 s per
+  // scene; with 3 scenes that's a full minute wasted per render).
   if (videoProvider === 'NONE') {
-    // Pexels stock B-roll — only viable when MOCK_MODE is off AND a Pexels
-    // key is configured. Otherwise return the local-mock sentinel so the
-    // caller renders a placeholder clip with FFmpeg (matches the fallback
-    // every other provider already uses on missing keys).
     const keywords = prompt.replace(/[^a-zA-Z0-9\s]/g, '').split(/\s+/).filter(w => w.length > 3).slice(0, 3).join(' ') || channel.niche;
     try {
       const links = await searchBroll(keywords, 1);
@@ -57,7 +68,9 @@ export async function generateSceneVisual(prompt, channel) {
     }
   }
 
-  // Animate image using the video provider
+  // Image-to-video providers: generate the base image, then animate it.
+  const imageProvider = channel.imageProvider || 'GEMINI';
+  const imageUrl = await generateBaseImage(prompt, imageProvider);
   return await animateImage(imageUrl, prompt, videoProvider);
 }
 
@@ -83,16 +96,22 @@ export async function renderVideo({ channel, topic, format = 'short', baseUrl, c
   const fmt = format === 'long' ? 'long' : 'short';
   const spec = formatSpec(fmt);
 
-  const script = await generateScript({
-    niche: channel.niche,
-    isCustomNiche: channel.isCustomNiche,
-    topic,
-    viralDNA: channel.viralDNA ?? undefined,
-    description: channel.description || undefined,
-    language: channel.language,
-    format: fmt,
-  });
-  const metadata = await generateMetadata({ script, niche: channel.niche });
+  // existingVideoId may not exist yet — use a tag for early-stage logs.
+  const logId = existingVideoId ?? 'pre-create';
+  const script = await stage('script (Claude)', logId, () =>
+    generateScript({
+      niche: channel.niche,
+      isCustomNiche: channel.isCustomNiche,
+      topic,
+      viralDNA: channel.viralDNA ?? undefined,
+      description: channel.description || undefined,
+      language: channel.language,
+      format: fmt,
+    }),
+  );
+  const metadata = await stage('metadata (Claude)', logId, () =>
+    generateMetadata({ script, niche: channel.niche }),
+  );
 
   // Either fill in the placeholder row the route created for polling, or
   // create a fresh one (scheduler path / direct callers).
@@ -139,7 +158,9 @@ export async function renderVideo({ channel, topic, format = 'short', baseUrl, c
 
     // 1. Voiceover (per-channel voice for variety)
     const voicePath = path.join(workDir, 'voice.mp3');
-    const vo = await synthesizeVoiceover({ script, seed: channel.id, outPath: voicePath });
+    const vo = await stage('voiceover', video.id, () =>
+      synthesizeVoiceover({ script, seed: channel.id, outPath: voicePath }),
+    );
 
     // 2. B-roll — generate visual clips for each scene
     const est = script.estimatedDurationSec || spec.minSec;
@@ -169,44 +190,46 @@ export async function renderVideo({ channel, topic, format = 'short', baseUrl, c
     const brollPaths = new Array(targetCues.length);
     for (let start = 0; start < targetCues.length; start += SCENE_CONCURRENCY) {
       const batch = targetCues.slice(start, start + SCENE_CONCURRENCY);
-      await Promise.all(
-        batch.map(async (cue, batchIdx) => {
-          const i = start + batchIdx;
-          console.log(`[videoPipeline] Generating scene visual ${i + 1}/${clipCount} for cue: "${cue}"`);
-          const videoUrl = await generateSceneVisual(cue, channel);
-          const brollPath = path.join(workDir, `broll${i}.mp4`);
-          if (videoUrl === 'mock:generate') {
-            // No real video provider available — generate a placeholder clip
-            // locally with FFmpeg (lavfi color source).
-            console.log(`[videoPipeline] Generating local mock clip for scene ${i + 1}`);
-            await generateMockClip(brollPath, 5);
-          } else {
-            await downloadTo(videoUrl, brollPath);
-          }
-          brollPaths[i] = brollPath;
-        }),
+      await stage(`scenes ${start + 1}-${start + batch.length}/${clipCount}`, video.id, () =>
+        Promise.all(
+          batch.map(async (cue, batchIdx) => {
+            const i = start + batchIdx;
+            const videoUrl = await generateSceneVisual(cue, channel);
+            const brollPath = path.join(workDir, `broll${i}.mp4`);
+            if (videoUrl === 'mock:generate') {
+              await generateMockClip(brollPath, 5);
+            } else {
+              await downloadTo(videoUrl, brollPath);
+            }
+            brollPaths[i] = brollPath;
+          }),
+        ),
       );
     }
 
     // 3. Royalty-free music bed (Content-ID safe; null → renders no music).
-    const music = await fetchMusic({
-      niche: channel.niche,
-      format: fmt,
-      seed: channel.id,
-      outPath: path.join(workDir, 'music.mp3'),
-    });
+    const music = await stage('music bed', video.id, () =>
+      fetchMusic({
+        niche: channel.niche,
+        format: fmt,
+        seed: channel.id,
+        outPath: path.join(workDir, 'music.mp3'),
+      }),
+    );
 
     // 4. Assemble (video + strategy-driven audio mix)
     const outPath = path.join(MEDIA_DIR, `${video.id}.mp4`);
-    const built = await assembleVideo({
-      voicePath,
-      musicPath: music?.path ?? null,
-      brollPaths,
-      sections: script.sections,
-      format: fmt,
-      workDir,
-      outPath,
-    });
+    const built = await stage('ffmpeg assemble', video.id, () =>
+      assembleVideo({
+        voicePath,
+        musicPath: music?.path ?? null,
+        brollPaths,
+        sections: script.sections,
+        format: fmt,
+        workDir,
+        outPath,
+      }),
+    );
 
     // Persist the rendered MP4 off the ephemeral container disk so a Render
     // restart between render and publish can't lose it. When the bucket isn't
@@ -215,19 +238,21 @@ export async function renderVideo({ channel, topic, format = 'short', baseUrl, c
     let mediaUrl;
     if (isStorageConfigured()) {
       storageKey = videoKey(video.id);
-      await uploadVideo(outPath, storageKey);
+      await stage('R2 upload', video.id, () => uploadVideo(outPath, storageKey));
       mediaUrl = await signedUrl(storageKey);
     } else {
       mediaUrl = `${baseUrl.replace(/\/$/, '')}/media/${video.id}.mp4`;
     }
 
     // 5. AI pre-upload quality gate — "prove it is good or not".
-    const review = await reviewVideo({
-      script,
-      metadata,
-      durationSec: built.durationSec,
-      format: fmt,
-    });
+    const review = await stage('review (Claude)', video.id, () =>
+      reviewVideo({
+        script,
+        metadata,
+        durationSec: built.durationSec,
+        format: fmt,
+      }),
+    );
 
     const updated = await prisma.video.update({
       where: { id: video.id },
