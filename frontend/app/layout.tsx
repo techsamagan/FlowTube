@@ -13,13 +13,16 @@ export const viewport: Viewport = {
   initialScale: 1,
   viewportFit: 'cover',
   themeColor: [
-    { media: '(prefers-color-scheme: light)', color: '#f8fafc' },
-    { media: '(prefers-color-scheme: dark)', color: '#090a0c' },
+    { media: '(prefers-color-scheme: light)', color: '#fafafc' },
+    { media: '(prefers-color-scheme: dark)', color: '#080a0e' },
   ],
 };
 
-// Apply the saved/preferred theme before first paint → no flash.
-const themeBootstrap = `(function(){try{var t=localStorage.getItem('flowtube-theme');if(t!=='light'&&t!=='dark'){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}var r=document.documentElement;r.classList.toggle('dark',t==='dark');r.style.colorScheme=t;}catch(e){document.documentElement.classList.add('dark');}})();`;
+// Dark is canonical (:root holds dark values). The user can opt into light
+// via the ThemeToggle, persisted to localStorage. We deliberately do NOT
+// honor prefers-color-scheme — the brand is dark-first and serious-tool;
+// light mode is an explicit user choice, not a system inheritance.
+const themeBootstrap = `(function(){try{var t=localStorage.getItem('flowtube-theme');var r=document.documentElement;r.classList.toggle('light',t==='light');r.style.colorScheme=t==='light'?'light':'dark';}catch(e){/* default dark */}})();`;
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
