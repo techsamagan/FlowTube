@@ -157,22 +157,35 @@ export async function renderVideo({ channel, topic, format = 'short', baseUrl, c
       targetCues.push(visualCues[i % visualCues.length] || `${channel.niche} cinematic view`);
     }
 
-    const brollPaths = [];
-    for (let i = 0; i < targetCues.length; i++) {
-      console.log(`[videoPipeline] Generating scene visual ${i + 1}/${clipCount} for cue: "${targetCues[i]}"`);
-      const videoUrl = await generateSceneVisual(targetCues[i], channel);
-      const brollPath = path.join(workDir, `broll${i}.mp4`);
-
-      if (videoUrl === 'mock:generate') {
-        // No real video provider available — generate a placeholder clip locally
-        // with FFmpeg (lavfi color source). This avoids any external URL download.
-        console.log(`[videoPipeline] Generating local mock clip for scene ${i + 1}`);
-        await generateMockClip(brollPath, 5);
-      } else {
-        await downloadTo(videoUrl, brollPath);
-      }
-
-      brollPaths.push(brollPath);
+    // Scene generation is the wall-clock dominator: each Kling/Veo job takes
+    // 3-5 min, so processing N scenes sequentially = N × 5 min. Run them in
+    // parallel batches of SCENE_CONCURRENCY instead — total time becomes
+    // ceil(N/concurrency) × 5 min. Concurrency is bounded by:
+    //  - provider rate limits (Kling allows ~5 concurrent jobs per account)
+    //  - Render Starter memory (each in-flight scene ≈ 30-60 MB transient)
+    // 3 is the sweet spot for a Short (all 3 scenes in one batch) without
+    // pushing either limit.
+    const SCENE_CONCURRENCY = 3;
+    const brollPaths = new Array(targetCues.length);
+    for (let start = 0; start < targetCues.length; start += SCENE_CONCURRENCY) {
+      const batch = targetCues.slice(start, start + SCENE_CONCURRENCY);
+      await Promise.all(
+        batch.map(async (cue, batchIdx) => {
+          const i = start + batchIdx;
+          console.log(`[videoPipeline] Generating scene visual ${i + 1}/${clipCount} for cue: "${cue}"`);
+          const videoUrl = await generateSceneVisual(cue, channel);
+          const brollPath = path.join(workDir, `broll${i}.mp4`);
+          if (videoUrl === 'mock:generate') {
+            // No real video provider available — generate a placeholder clip
+            // locally with FFmpeg (lavfi color source).
+            console.log(`[videoPipeline] Generating local mock clip for scene ${i + 1}`);
+            await generateMockClip(brollPath, 5);
+          } else {
+            await downloadTo(videoUrl, brollPath);
+          }
+          brollPaths[i] = brollPath;
+        }),
+      );
     }
 
     // 3. Royalty-free music bed (Content-ID safe; null → renders no music).
