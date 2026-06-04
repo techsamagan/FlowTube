@@ -75,8 +75,17 @@ export async function buildSrt(sections, totalSec, srtPath) {
   return srtPath;
 }
 
+// LOW_MEMORY=true on Render Starter drops resolution to 720x1280 (saves ~55%
+// of FFmpeg's per-frame buffer memory) AND turns off the rich audio mix +
+// captions (libass and loudnorm are the OOM-killers on 512 MB). Default
+// 1080x1920 stays for dev / paid Render plans.
+const LOW_MEM = process.env.LOW_MEMORY === 'true';
+const VIDEO_W = LOW_MEM ? 720 : 1080;
+const VIDEO_H = LOW_MEM ? 1280 : 1920;
+
 const NORM =
-  'scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,fps=30,setsar=1';
+  `scale=${VIDEO_W}:${VIDEO_H}:force_original_aspect_ratio=increase,` +
+  `crop=${VIDEO_W}:${VIDEO_H},fps=30,setsar=1`;
 
 // Format-aware audio strategy (the "viral sound guide"):
 //  short → punchy whoosh on every cut, music a touch louder.
@@ -131,6 +140,30 @@ async function buildAudioMix({ voicePath, musicPath, cutTimes, format, workDir }
   ]);
   const Dc = await probeDuration(voice);
   const audioFinal = path.join(workDir, 'audio_final.m4a');
+
+  // LOW_MEMORY skips the heavy audio mix (sidechain + loudnorm). It encodes
+  // straight to AAC with a simple volume mix — same memory footprint as the
+  // current fallback. Voice ducking is approximated by lowering music volume
+  // even further (no sidechain compressor needed).
+  if (LOW_MEM) {
+    if (musicPath) {
+      await run('ffmpeg', [
+        '-y', '-i', voice,
+        '-stream_loop', '-1', '-i', musicPath,
+        '-filter_complex',
+        `[1:a]volume=${a.musicVol * 0.6},atrim=0:${Dc.toFixed(2)}[mt];` +
+          `[0:a][mt]amix=inputs=2:normalize=0[aout]`,
+        '-map', '[aout]', '-t', Dc.toFixed(2),
+        '-c:a', 'aac', '-b:a', '128k', audioFinal,
+      ]);
+    } else {
+      await run('ffmpeg', [
+        '-y', '-i', voice,
+        '-c:a', 'aac', '-b:a', '128k', audioFinal,
+      ]);
+    }
+    return { path: audioFinal, durationSec: Dc };
+  }
 
   try {
     // (3) SFX bed: a full-length silent base with the SFX dropped on each cut.
@@ -264,12 +297,13 @@ export async function assembleVideo({
 
   // 4. Mux video + the finished audio, looped/trimmed to the audio length,
   //    burning captions when (a) this FFmpeg build has libass, AND (b) the
-  //    host hasn't opted out via SKIP_CAPTIONS=true. Caption burning re-runs
-  //    libass + a re-encode for every frame and is the CPU bottleneck on
-  //    Render Starter (0.5 vCPU) — a 30-s Short took >10 min there. Opt-out
-  //    lets the same code render captionless in ~30 s on the same hardware.
+  //    host hasn't opted out via SKIP_CAPTIONS or LOW_MEMORY. Caption burning
+  //    re-runs libass + a re-encode for every frame — the CPU/memory killer
+  //    on Render Starter (0.5 vCPU / 512 MB).
   const captioned =
-    process.env.SKIP_CAPTIONS !== 'true' && (await hasSubtitlesFilter());
+    process.env.SKIP_CAPTIONS !== 'true' &&
+    !LOW_MEM &&
+    (await hasSubtitlesFilter());
   const args = [
     '-y', '-stream_loop', '-1', '-i', 'broll.mp4', '-i', audio.path,
     '-t', Dc.toFixed(2),
