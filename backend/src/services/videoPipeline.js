@@ -31,19 +31,39 @@ import {
 const STORAGE = path.join(fileURLToPath(new URL('../../storage', import.meta.url)));
 export const MEDIA_DIR = path.join(STORAGE, 'media');
 
-// Wrap an async step with timing logs. Makes wall-clock visible in Render
-// logs so a future stuck render is diagnosable without redeploying just to
-// add debug prints. Returns the wrapped promise's value unchanged.
+// Wrap an async step with timing logs AND a DB write so the breakdown is
+// observable via the poll endpoint (Render log access not required for
+// diagnosing a stuck render). Returns the wrapped promise's value unchanged.
 async function stage(name, videoId, fn) {
   const t0 = Date.now();
   console.log(`[render ${videoId}] → ${name} start`);
   try {
     const r = await fn();
-    console.log(`[render ${videoId}] ✓ ${name} ${Math.round((Date.now() - t0) / 100) / 10}s`);
+    const ms = Date.now() - t0;
+    console.log(`[render ${videoId}] ✓ ${name} ${Math.round(ms / 100) / 10}s`);
+    await appendStage(videoId, { stage: name, ms, ok: true, at: new Date().toISOString() });
     return r;
   } catch (e) {
-    console.log(`[render ${videoId}] ✗ ${name} failed after ${Math.round((Date.now() - t0) / 100) / 10}s: ${e.message}`);
+    const ms = Date.now() - t0;
+    console.log(`[render ${videoId}] ✗ ${name} failed after ${Math.round(ms / 100) / 10}s: ${e.message}`);
+    await appendStage(videoId, { stage: name, ms, ok: false, err: e.message?.slice(0, 200), at: new Date().toISOString() });
     throw e;
+  }
+}
+
+async function appendStage(videoId, entry) {
+  // Best-effort — never crash a render because diagnostics couldn't write.
+  if (!videoId || videoId === 'pre-create') return;
+  try {
+    const row = await prisma.video.findUnique({ where: { id: videoId }, select: { stagesLog: true } });
+    if (!row) return;
+    const existing = Array.isArray(row.stagesLog) ? row.stagesLog : [];
+    await prisma.video.update({
+      where: { id: videoId },
+      data: { stagesLog: [...existing, entry] },
+    });
+  } catch {
+    // swallow
   }
 }
 

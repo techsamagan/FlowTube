@@ -117,6 +117,10 @@ model Video {
   // Object-storage key (e.g. "videos/<id>.mp4") when the MP4 is persisted
   // to S3/R2. Null = the MP4 is only on the local ephemeral disk.
   storageKey   String?
+  // [{stage, ms, at}] entries appended as each pipeline step finishes.
+  // Surfaced via /generate/video/:id so a stuck render is diagnosable
+  // without log access.
+  stagesLog    Json?
   thumbnailUrl String?
 
   title       String?

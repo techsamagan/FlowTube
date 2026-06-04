@@ -206,6 +206,7 @@ router.get('/video/:id', async (req, res, next) => {
       format: video.format,
       reviewMeta: video.reviewMeta,
       script: video.scriptMeta ?? null,
+      stagesLog: video.stagesLog ?? null,
       published: video.status === 'published',
       youtubeVideoId: video.youtubeVideoId,
     };

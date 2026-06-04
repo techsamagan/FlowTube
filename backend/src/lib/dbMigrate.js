@@ -23,6 +23,10 @@ const STATEMENTS = [
   // Persistent media storage: rendered MP4s upload to S3/R2 when AWS_BUCKET_NAME
   // is set. This column holds the object key. Null = local-disk-only (legacy).
   `ALTER TABLE "Video" ADD COLUMN IF NOT EXISTS "storageKey" TEXT`,
+  // Per-step timing breakdown for diagnostics (script/voiceover/scenes/...).
+  // Reading the poll endpoint of a stuck render now shows which stage is
+  // hung without needing Render dashboard log access.
+  `ALTER TABLE "Video" ADD COLUMN IF NOT EXISTS "stagesLog" JSONB`,
 ];
 
 export async function ensureSchema() {
