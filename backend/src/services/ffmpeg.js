@@ -230,7 +230,7 @@ export async function assembleVideo({
       '-y', '-stream_loop', '-1', '-i', brollPaths[i],
       '-t', per.toFixed(2), '-an',
       '-vf', NORM, '-r', '30',
-      '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
+      '-c:v', 'libx264', '-preset', process.env.FFMPEG_PRESET ?? 'ultrafast', '-pix_fmt', 'yuv420p',
       seg,
     ]);
     segs.push(seg);
@@ -257,10 +257,13 @@ export async function assembleVideo({
   const Dc = audio.durationSec; // post-silence-trim length drives everything
 
   // 4. Mux video + the finished audio, looped/trimmed to the audio length,
-  //    burning captions when this FFmpeg build has the (libass) subtitles
-  //    filter. Captions are timed to the trimmed audio so they stay in sync.
-  //    Subtitles filter is path-sensitive → run in workDir with bare names.
-  const captioned = await hasSubtitlesFilter();
+  //    burning captions when (a) this FFmpeg build has libass, AND (b) the
+  //    host hasn't opted out via SKIP_CAPTIONS=true. Caption burning re-runs
+  //    libass + a re-encode for every frame and is the CPU bottleneck on
+  //    Render Starter (0.5 vCPU) — a 30-s Short took >10 min there. Opt-out
+  //    lets the same code render captionless in ~30 s on the same hardware.
+  const captioned =
+    process.env.SKIP_CAPTIONS !== 'true' && (await hasSubtitlesFilter());
   const args = [
     '-y', '-stream_loop', '-1', '-i', 'broll.mp4', '-i', audio.path,
     '-t', Dc.toFixed(2),
@@ -282,7 +285,7 @@ export async function assembleVideo({
   }
   args.push(
     '-map', '0:v', '-map', '1:a',
-    '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
+    '-c:v', 'libx264', '-preset', process.env.FFMPEG_PRESET ?? 'ultrafast', '-pix_fmt', 'yuv420p',
     '-c:a', 'aac', '-b:a', '192k', '-shortest', outPath,
   );
   await run('ffmpeg', args, workDir);
