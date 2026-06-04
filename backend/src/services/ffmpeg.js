@@ -76,24 +76,29 @@ export async function buildSrt(sections, totalSec, srtPath) {
   return srtPath;
 }
 
-// LOW_MEMORY mode drops res to 720x1280, skips rich audio mix + libass
-// captions. Auto-enabled when container RAM is <1 GB (Render Starter is
-// 512 MB → auto-on). Override either way with LOW_MEMORY=true|false.
+// LOW_MEMORY mode targets containers that can't fit the rich 1080x1920
+// pipeline + libass + loudnorm in their RAM budget (the classic case:
+// Render Starter at 512 MB). Auto-on when either:
+//   - container RAM <1 GB per os.totalmem() (works when cgroup is exposed),
+//   - OR the RENDER env var is set (Render Starter doesn't expose cgroup,
+//     so os.totalmem() lies; the env var is the only reliable signal).
+// LOW_MEMORY=true|false explicitly overrides both auto-checks.
 const LOW_MEM = (() => {
   if (process.env.LOW_MEMORY === 'true') return true;
   if (process.env.LOW_MEMORY === 'false') return false;
-  // Auto: tighten when the host can't fit the full pipeline. 1 GB threshold
-  // gives a comfortable margin over Render Starter (512 MB) without
-  // accidentally tripping on a 2 GB+ machine.
   const totalGB = os.totalmem() / (1024 * 1024 * 1024);
-  return totalGB < 1;
+  if (totalGB < 1) return true;
+  if (process.env.RENDER === 'true') return true;
+  return false;
 })();
 if (LOW_MEM) {
   // eslint-disable-next-line no-console
-  console.log(`[ffmpeg] LOW_MEMORY mode active (totalmem ${(os.totalmem() / 1024 / 1024).toFixed(0)} MB)`);
+  console.log(`[ffmpeg] LOW_MEMORY mode active (totalmem=${(os.totalmem() / 1024 / 1024).toFixed(0)} MB, RENDER=${process.env.RENDER ?? 'unset'})`);
 }
-const VIDEO_W = LOW_MEM ? 720 : 1080;
-const VIDEO_H = LOW_MEM ? 1280 : 1920;
+// 540x960 is half-HD vertical — still 9:16, still legal for YouTube Shorts,
+// uses ~25% of the per-frame buffer memory of 1080x1920.
+const VIDEO_W = LOW_MEM ? 540 : 1080;
+const VIDEO_H = LOW_MEM ? 960 : 1920;
 
 const NORM =
   `scale=${VIDEO_W}:${VIDEO_H}:force_original_aspect_ratio=increase,` +
@@ -251,7 +256,7 @@ async function buildAudioMix({ voicePath, musicPath, cutTimes, format, workDir }
 
 /**
  * Assemble the final video.
- * @param {{voicePath:string, musicPath?:string, brollPaths:string[], sections:object[], format?:string, workDir:string, outPath:string}} a
+ * @param {{voicePath:string, musicPath?:string, brollPaths:string[], sections:object[], format?:string, workDir:string, outPath:string, onSubstage?:(stage:string,ms:number,ok:boolean,err?:string)=>void}} a
  */
 export async function assembleVideo({
   voicePath,
@@ -261,50 +266,62 @@ export async function assembleVideo({
   format = 'short',
   workDir,
   outPath,
+  onSubstage = null,
 }) {
+  // Helper to wall-clock a sub-step. Drops a hook (onSubstage) for the caller
+  // to persist into Video.stagesLog so a stuck ffmpeg call is diagnosable
+  // without log dashboard access.
+  const sub = async (name, fn) => {
+    const t0 = Date.now();
+    try {
+      const r = await fn();
+      const ms = Date.now() - t0;
+      console.log(`[ffmpeg] ${name} ${(ms / 1000).toFixed(1)}s`);
+      onSubstage?.(name, ms, true);
+      return r;
+    } catch (e) {
+      const ms = Date.now() - t0;
+      console.log(`[ffmpeg] ${name} FAILED after ${(ms / 1000).toFixed(1)}s: ${e.message}`);
+      onSubstage?.(name, ms, false, e.message?.slice(0, 200));
+      throw e;
+    }
+  };
   const D = await probeDuration(voicePath);
   const n = brollPaths.length;
   const per = Math.max(D / n, 2);
 
-  // 1. Normalize each B-roll clip to a uniform 1080x1920 segment of `per` sec
+  // 1. Normalize each B-roll clip to a uniform segment of `per` sec
   //    (looping clips shorter than `per`).
-  const _t1 = Date.now();
-  const segs = [];
-  for (let i = 0; i < n; i++) {
-    const seg = path.join(workDir, `seg${i}.mp4`);
-    await run('ffmpeg', [
-      '-y', '-stream_loop', '-1', '-i', brollPaths[i],
-      '-t', per.toFixed(2), '-an',
-      '-vf', NORM, '-r', '30',
-      '-c:v', 'libx264', '-preset', process.env.FFMPEG_PRESET ?? 'ultrafast', '-pix_fmt', 'yuv420p',
-      seg,
-    ]);
-    segs.push(seg);
-  }
-  console.log(`[ffmpeg] normalize ${n} segs ${((Date.now() - _t1) / 1000).toFixed(1)}s`);
+  const segs = await sub(`normalize ${n} segs`, async () => {
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      const seg = path.join(workDir, `seg${i}.mp4`);
+      await run('ffmpeg', [
+        '-y', '-stream_loop', '-1', '-i', brollPaths[i],
+        '-t', per.toFixed(2), '-an',
+        '-vf', NORM, '-r', '30',
+        '-c:v', 'libx264', '-preset', process.env.FFMPEG_PRESET ?? 'ultrafast', '-pix_fmt', 'yuv420p',
+        seg,
+      ]);
+      out.push(seg);
+    }
+    return out;
+  });
 
   // 2. Concat segments.
-  const _t2 = Date.now();
-  const listFile = path.join(workDir, 'concat.txt');
-  await writeFile(listFile, segs.map((s) => `file '${s}'`).join('\n'));
-  const broll = path.join(workDir, 'broll.mp4');
-  await run('ffmpeg', ['-y', '-f', 'concat', '-safe', '0', '-i', listFile, '-c', 'copy', broll]);
-  console.log(`[ffmpeg] concat ${((Date.now() - _t2) / 1000).toFixed(1)}s`);
+  await sub('concat', async () => {
+    const listFile = path.join(workDir, 'concat.txt');
+    await writeFile(listFile, segs.map((s) => `file '${s}'`).join('\n'));
+    const broll = path.join(workDir, 'broll.mp4');
+    await run('ffmpeg', ['-y', '-f', 'concat', '-safe', '0', '-i', listFile, '-c', 'copy', broll]);
+  });
 
-  // 3. Build the strategy-driven audio track (no dead-air start, ducked
-  //    royalty-free music bed, SFX on every cut, -14 LUFS). SFX land on the
-  //    visible B-roll cuts (multiples of `per`).
+  // 3. Build the strategy-driven audio track.
   const cutTimes = [];
   for (let t = per; t < D; t += per) cutTimes.push(t);
-  const _t3 = Date.now();
-  const audio = await buildAudioMix({
-    voicePath,
-    musicPath,
-    cutTimes,
-    format,
-    workDir,
-  });
-  console.log(`[ffmpeg] audio mix ${((Date.now() - _t3) / 1000).toFixed(1)}s`);
+  const audio = await sub('audio mix', () =>
+    buildAudioMix({ voicePath, musicPath, cutTimes, format, workDir }),
+  );
   const Dc = audio.durationSec; // post-silence-trim length drives everything
 
   // 4. Mux video + the finished audio, looped/trimmed to the audio length,
@@ -350,9 +367,9 @@ export async function assembleVideo({
     '-map', '0:v', '-map', '1:a',
     '-c:a', 'aac', '-b:a', '192k', '-shortest', outPath,
   );
-  const _t4 = Date.now();
-  await run('ffmpeg', args, workDir);
-  console.log(`[ffmpeg] final mux ${((Date.now() - _t4) / 1000).toFixed(1)}s ${captioned ? '(with captions)' : '(stream-copy)'}`);
+  await sub(`final mux ${captioned ? '(captions)' : '(copy)'}`, () =>
+    run('ffmpeg', args, workDir),
+  );
 
   return {
     path: outPath,

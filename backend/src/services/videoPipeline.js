@@ -228,16 +228,27 @@ export async function renderVideo({ channel, topic, format = 'short', baseUrl, c
     }
 
     // 3. Royalty-free music bed (Content-ID safe; null → renders no music).
-    const music = await stage('music bed', video.id, () =>
-      fetchMusic({
-        niche: channel.niche,
-        format: fmt,
-        seed: channel.id,
-        outPath: path.join(workDir, 'music.mp3'),
-      }),
-    );
+    // Skipped under LOW_MEMORY to keep the audio mix to a single voice track
+    // — one less ffmpeg invocation, one less amix branch on a 512 MB box.
+    const isLowMem =
+      process.env.LOW_MEMORY === 'true' ||
+      process.env.RENDER === 'true' ||
+      (process.env.LOW_MEMORY !== 'false' &&
+        (await import('node:os')).totalmem() < 1024 ** 3);
+    const music = isLowMem
+      ? null
+      : await stage('music bed', video.id, () =>
+          fetchMusic({
+            niche: channel.niche,
+            format: fmt,
+            seed: channel.id,
+            outPath: path.join(workDir, 'music.mp3'),
+          }),
+        );
 
-    // 4. Assemble (video + strategy-driven audio mix)
+    // 4. Assemble (video + strategy-driven audio mix). The onSubstage hook
+    // appends each ffmpeg sub-call's duration to Video.stagesLog so a
+    // mid-assembly hang shows exactly which call killed it.
     const outPath = path.join(MEDIA_DIR, `${video.id}.mp4`);
     const built = await stage('ffmpeg assemble', video.id, () =>
       assembleVideo({
@@ -248,6 +259,14 @@ export async function renderVideo({ channel, topic, format = 'short', baseUrl, c
         format: fmt,
         workDir,
         outPath,
+        onSubstage: (name, ms, ok, err) =>
+          appendStage(video.id, {
+            stage: `ffmpeg/${name}`,
+            ms,
+            ok,
+            err,
+            at: new Date().toISOString(),
+          }),
       }),
     );
 
