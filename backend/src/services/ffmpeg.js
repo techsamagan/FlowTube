@@ -223,6 +223,7 @@ export async function assembleVideo({
 
   // 1. Normalize each B-roll clip to a uniform 1080x1920 segment of `per` sec
   //    (looping clips shorter than `per`).
+  const _t1 = Date.now();
   const segs = [];
   for (let i = 0; i < n; i++) {
     const seg = path.join(workDir, `seg${i}.mp4`);
@@ -235,18 +236,22 @@ export async function assembleVideo({
     ]);
     segs.push(seg);
   }
+  console.log(`[ffmpeg] normalize ${n} segs ${((Date.now() - _t1) / 1000).toFixed(1)}s`);
 
   // 2. Concat segments.
+  const _t2 = Date.now();
   const listFile = path.join(workDir, 'concat.txt');
   await writeFile(listFile, segs.map((s) => `file '${s}'`).join('\n'));
   const broll = path.join(workDir, 'broll.mp4');
   await run('ffmpeg', ['-y', '-f', 'concat', '-safe', '0', '-i', listFile, '-c', 'copy', broll]);
+  console.log(`[ffmpeg] concat ${((Date.now() - _t2) / 1000).toFixed(1)}s`);
 
   // 3. Build the strategy-driven audio track (no dead-air start, ducked
   //    royalty-free music bed, SFX on every cut, -14 LUFS). SFX land on the
   //    visible B-roll cuts (multiples of `per`).
   const cutTimes = [];
   for (let t = per; t < D; t += per) cutTimes.push(t);
+  const _t3 = Date.now();
   const audio = await buildAudioMix({
     voicePath,
     musicPath,
@@ -254,6 +259,7 @@ export async function assembleVideo({
     format,
     workDir,
   });
+  console.log(`[ffmpeg] audio mix ${((Date.now() - _t3) / 1000).toFixed(1)}s`);
   const Dc = audio.durationSec; // post-silence-trim length drives everything
 
   // 4. Mux video + the finished audio, looped/trimmed to the audio length,
@@ -283,12 +289,24 @@ export async function assembleVideo({
         'without burned captions. `brew install ffmpeg` to enable them.',
     );
   }
+  // When NOT burning captions we can skip the video re-encode entirely —
+  // broll.mp4 is already libx264/yuv420p/30fps from step 1. That turns the
+  // final mux from "decode-encode every frame" into a stream copy: instant.
+  if (captioned) {
+    args.push(
+      '-c:v', 'libx264', '-preset', process.env.FFMPEG_PRESET ?? 'ultrafast',
+      '-pix_fmt', 'yuv420p',
+    );
+  } else {
+    args.push('-c:v', 'copy');
+  }
   args.push(
     '-map', '0:v', '-map', '1:a',
-    '-c:v', 'libx264', '-preset', process.env.FFMPEG_PRESET ?? 'ultrafast', '-pix_fmt', 'yuv420p',
     '-c:a', 'aac', '-b:a', '192k', '-shortest', outPath,
   );
+  const _t4 = Date.now();
   await run('ffmpeg', args, workDir);
+  console.log(`[ffmpeg] final mux ${((Date.now() - _t4) / 1000).toFixed(1)}s ${captioned ? '(with captions)' : '(stream-copy)'}`);
 
   return {
     path: outPath,
